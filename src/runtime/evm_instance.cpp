@@ -76,8 +76,7 @@ void EVMInstance::setExecutionError(const Error &NewErr, uint32_t IgnoredDepth,
   ZEN_ASSERT(NewErr.getPhase() == common::ErrorPhase::Execution);
   setError(NewErr);
 
-  if (NewErr.getCode() == ErrorCode::GasLimitExceeded ||
-      NewErr.getCode() == ErrorCode::EVMOutOfGas) {
+  if (NewErr.getCode() == ErrorCode::GasLimitExceeded) {
     setGas(0); // gas left
   }
 }
@@ -114,18 +113,10 @@ void EVMInstance::triggerInstanceExceptionOnJIT(EVMInstance *Inst,
 }
 #endif // ZEN_ENABLE_JIT
 
-void EVMInstance::consumeMemoryExpansionGas(uint64_t RequiredSize) {
-  uint64_t ExpansionCost =
-      calculateMemoryExpansionCost(Memory.size(), RequiredSize);
-  uint64_t GasLeft = getGas();
-  if (ExpansionCost > GasLeft) {
-    throw common::getError(common::ErrorCode::EVMOutOfGas);
-  }
-  chargeGas(ExpansionCost);
-}
 void EVMInstance::expandMemory(uint64_t RequiredSize) {
   auto NewSize = (RequiredSize + 31) / 32 * 32;
-  consumeMemoryExpansionGas(NewSize);
+  uint64_t ExpansionCost = calculateMemoryExpansionCost(Memory.size(), NewSize);
+  chargeGas(ExpansionCost);
   if (NewSize > Memory.size()) {
     Memory.resize(NewSize, 0);
   }
@@ -136,7 +127,11 @@ void EVMInstance::chargeGas(uint64_t GasCost) {
 
   uint64_t GasLeft = getGas();
   if (GasLeft < GasCost) {
-    throw common::getError(common::ErrorCode::EVMOutOfGas);
+#if defined(ZEN_ENABLE_JIT) && defined(ZEN_ENABLE_CPU_EXCEPTION)
+    triggerInstanceExceptionOnJIT(this, common::ErrorCode::GasLimitExceeded);
+#else
+    throw common::getError(common::ErrorCode::GasLimitExceeded);
+#endif
   }
   uint64_t NewGas = GasLeft - GasCost;
   setGas(NewGas);
