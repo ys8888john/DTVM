@@ -675,6 +675,7 @@ void Runtime::callEVMMain(EVMInstance &Inst, evmc_message &Msg,
   evmc_message MsgWithCode = Msg;
   MsgWithCode.code = reinterpret_cast<uint8_t *>(Inst.getModule()->Code);
   MsgWithCode.code_size = Inst.getModule()->CodeSize;
+  Inst.setExeResult(evmc::Result{EVMC_SUCCESS, 0, 0});
   Inst.pushMessage(&MsgWithCode);
   if (getConfig().Mode == RunMode::InterpMode) {
     callEVMInInterpMode(Inst, MsgWithCode, Result);
