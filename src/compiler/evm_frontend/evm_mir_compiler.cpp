@@ -1916,7 +1916,10 @@ EVMMirBuilder::convertU256InstrToU256Operand(MInstruction *U256Instr) {
     MInstruction *IndexedPtr = createInstruction<ConversionInstruction>(
         false, OP_inttoptr, U64PtrType, IndexedAddr);
 
-    Result[I] = createInstruction<LoadInstruction>(false, I64Type, IndexedPtr);
+    MInstruction *LoadInstr =
+        createInstruction<LoadInstruction>(false, I64Type, IndexedPtr);
+    Variable *ValVar = storeInstructionInTemp(LoadInstr, I64Type);
+    Result[I] = loadVariable(ValVar);
   }
 
   return Operand(Result, EVMType::UINT256);
