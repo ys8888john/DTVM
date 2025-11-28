@@ -73,6 +73,7 @@ int main(int argc, char *argv[]) {
   std::string Filename;
   std::string FuncName;
   std::string EntryHint;
+  std::string Calldata;
   std::vector<std::string> Args;
   std::vector<std::string> Envs;
   std::vector<std::string> Dirs;
@@ -149,6 +150,7 @@ int main(int argc, char *argv[]) {
 #ifdef ZEN_ENABLE_EVM
     CLIParser->add_flag("--enable-evm-gas", Config.EnableEvmGasMetering,
                         "Enable EVM gas metering when compiling EVM bytecode");
+    CLIParser->add_option("--calldata", Calldata, "Calldata hex pass to EVM");
 #endif // ZEN_ENABLE_EVM
 #endif // ZEN_ENABLE_MULTIPASS_JIT
 
@@ -217,6 +219,11 @@ int main(int argc, char *argv[]) {
         .code = {}, // code will load in callEVMMain
         .code_size = 0,
     };
+    auto CalldataBytes = zen::utils::fromHex(Calldata);
+    if (CalldataBytes.has_value()) {
+      Msg.input_data = CalldataBytes->data();
+      Msg.input_size = CalldataBytes->size();
+    }
     evmc::Result ExeResult;
     RT->callEVMMain(*Inst, Msg, ExeResult);
     // Use EVM status code directly as process exit code
