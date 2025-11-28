@@ -22,6 +22,7 @@
 #include <vector>
 
 #include <evmc/evmc.hpp>
+#include <evmc/hex.hpp>
 #include <evmc/mocked_host.hpp>
 #include <rapidjson/document.h>
 
@@ -163,6 +164,7 @@ ExecutionResult executeStateTest(const StateTestFixture &Fixture,
     ExecConfig.Bytecode = TargetAccount->Account.code.data();
     ExecConfig.BytecodeSize = TargetAccount->Account.code.size();
     ExecConfig.Message = *PT.Message;
+    ExecConfig.Revision = mapForkToRevision(Fork);
 
     // Convert AccessList from ParsedTransaction to TransactionExecutionConfig
     for (const auto &Entry : PT.AccessList) {

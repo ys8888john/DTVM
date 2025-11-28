@@ -62,12 +62,12 @@ if(ZEN_ENABLE_SPEC_TEST)
     add_subdirectory(mpt)
     add_executable(evmInterpTests evm_interp_tests.cpp)
     add_executable(
-      solidityContractTests solidity_contract_tests.cpp
+      solidityContractTests evm_precompiles.hpp solidity_contract_tests.cpp
                             solidity_test_helpers.cpp
     )
     add_executable(
-      evmStateTests evm_state_tests.cpp evm_test_fixtures.cpp
-                    evm_test_helpers.cpp
+      evmStateTests evm_precompiles.hpp evm_state_tests.cpp
+                    evm_test_fixtures.cpp evm_test_helpers.cpp
     )
     add_executable(mptCompareCpp mpt_compare_cpp.cpp)
   endif()

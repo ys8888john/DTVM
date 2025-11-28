@@ -5,6 +5,7 @@
 #include "common/errors.h"
 #include "evm/interpreter.h"
 #include "evmc/evmc.h"
+#include "evmc/hex.hpp"
 #include "evmc/instructions.h"
 #include "host/evm/crypto.h"
 #include "runtime/evm_instance.h"
@@ -16,6 +17,15 @@ zen::evm::InterpreterExecContext *zen::evm::EVMResource::CurrentContext =
 using namespace zen;
 using namespace zen::evm;
 using namespace zen::runtime;
+
+evmc_revision currentRevision() {
+  auto *Context = EVMResource::getInterpreterExecContext();
+  if (!Context) {
+    return DEFAULT_REVISION;
+  }
+  auto *Instance = Context->getInstance();
+  return Instance ? Instance->getRevision() : DEFAULT_REVISION;
+}
 
 /* ---------- Define gas cost macros begin ---------- */
 
@@ -249,15 +259,6 @@ bool checkMemoryExpandAndChargeGas(EVMFrame *Frame, const intx::uint256 &Offset,
 // Convert uint256 to uint64
 uint64_t uint256ToUint64(const intx::uint256 &Value) {
   return static_cast<uint64_t>(Value & 0xFFFFFFFFFFFFFFFFULL);
-}
-
-evmc_revision currentRevision() {
-  auto *Context = EVMResource::getInterpreterExecContext();
-  if (!Context) {
-    return DEFAULT_REVISION;
-  }
-  auto *Instance = Context->getInstance();
-  return Instance ? Instance->getRevision() : DEFAULT_REVISION;
 }
 
 } // anonymous namespace
@@ -1076,14 +1077,17 @@ void PushHandler::doExecute() {
   auto *Mod = Inst->getModule();
   auto *Code = Mod->Code;
   uint8_t OpcodeByte = static_cast<uint8_t>(OpCode);
-  size_t CodeSize = Mod->CodeSize;
   // PUSH1 ~ PUSH32
   uint32_t NumBytes =
       OpcodeByte - static_cast<uint8_t>(evmc_opcode::OP_PUSH1) + 1;
-  EVM_REQUIRE(Frame->Pc + NumBytes < CodeSize, UnexpectedEnd);
   uint8_t ValueBytes[32];
   memset(ValueBytes, 0, sizeof(ValueBytes));
-  std::memcpy(ValueBytes + (32 - NumBytes), Code + Frame->Pc + 1, NumBytes);
+  size_t Offset = Frame->Pc + 1;
+  size_t AvailableBytes = Offset < Mod->CodeSize ? (Mod->CodeSize - Offset) : 0;
+  size_t CopyBytes = std::min<uint32_t>(NumBytes, AvailableBytes);
+  if (CopyBytes > 0) {
+    std::memcpy(ValueBytes + (32 - NumBytes), Code + Offset, CopyBytes);
+  }
   intx::uint256 Val = intx::be::load<intx::uint256>(ValueBytes);
   EVM_REQUIRE_STACK_SPACE(Frame, 1);
   Frame->push(Val);
@@ -1392,7 +1396,7 @@ void CallHandler::doExecute() {
 
   // Track subcall refund at Instance level
   Context->getInstance()->addGasRefund(Result.gas_refund);
-  Context->setStatus(Result.status_code);
+  Context->setStatus(EVMC_SUCCESS);
 }
 
 void LogHandler::doExecute() {
