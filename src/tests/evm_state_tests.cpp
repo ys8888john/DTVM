@@ -38,6 +38,39 @@ const bool PRINT_FAILURE_DETAILS = true;
 // TODO: RunMode selection logic will be refactored in the future.
 constexpr common::RunMode STATE_TEST_RUN_MODE = common::RunMode::MultipassMode;
 
+// Revision filter configuration
+// Set to EVMC_MAX_REVISION to run all tests, or a specific revision to filter
+evmc_revision getTargetRevision() {
+  static const std::unordered_map<std::string, evmc_revision> RevisionMap = {
+      {"ALL", EVMC_MAX_REVISION},
+      {"Frontier", EVMC_FRONTIER},
+      {"Homestead", EVMC_HOMESTEAD},
+      {"TangerineWhistle", EVMC_TANGERINE_WHISTLE},
+      {"SpuriousDragon", EVMC_SPURIOUS_DRAGON},
+      {"Byzantium", EVMC_BYZANTIUM},
+      {"Constantinople", EVMC_CONSTANTINOPLE},
+      {"Petersburg", EVMC_PETERSBURG},
+      {"Istanbul", EVMC_ISTANBUL},
+      {"Berlin", EVMC_BERLIN},
+      {"London", EVMC_LONDON},
+      {"Paris", EVMC_PARIS},
+      {"Shanghai", EVMC_SHANGHAI},
+      {"Cancun", EVMC_CANCUN},
+      {"Prague", EVMC_PRAGUE},
+  };
+
+  const char *EnvRevision = std::getenv("DTVM_TEST_REVISION");
+  if (EnvRevision != nullptr) {
+    std::string RevisionStr = EnvRevision;
+    auto It = RevisionMap.find(RevisionStr);
+    if (It != RevisionMap.end()) {
+      return It->second;
+    }
+  }
+  // Default: only test Cancun revision
+  return EVMC_CANCUN;
+}
+
 RuntimeConfig buildRuntimeConfig() {
   RuntimeConfig Config;
 
@@ -299,6 +332,7 @@ const std::vector<StateTestCaseParam> &getStateTestParams() {
     const auto &Fixtures = getStateFixtures();
 
     size_t CaseCounter = 0;
+    evmc_revision TargetRevision = getTargetRevision();
 
     for (const auto &Fixture : Fixtures) {
       if (!Fixture.Post || !Fixture.Post->IsObject()) {
@@ -315,6 +349,14 @@ const std::vector<StateTestCaseParam> &getStateTestParams() {
 
       for (const auto &Fork : Fixture.Post->GetObject()) {
         std::string ForkName = Fork.name.GetString();
+
+        // Filter by revision if not running all tests
+        if (TargetRevision != EVMC_MAX_REVISION) {
+          evmc_revision ForkRevision = mapForkToRevision(ForkName);
+          if (ForkRevision != TargetRevision) {
+            continue;
+          }
+        }
 
         const rapidjson::Value &ForkResults = Fork.value;
         if (!ForkResults.IsArray()) {
