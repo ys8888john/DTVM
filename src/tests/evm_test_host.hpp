@@ -246,10 +246,10 @@ public:
       ReturnData.clear();
     }
 
-    if (OriginalGas >= static_cast<uint64_t>(Result.RemainingGas)) {
-      Result.GasUsed =
-          OriginalGas - static_cast<uint64_t>(Result.RemainingGas);
-    }
+    Result.GasUsed =
+        OriginalGas > static_cast<uint64_t>(Result.RemainingGas)
+            ? OriginalGas - static_cast<uint64_t>(Result.RemainingGas)
+            : 0;
 
     // Add access list intrinsic gas to GasUsed (EIP-2930)
     Result.GasUsed += AccessListIntrinsicGas + TxDataIntrinsicGas;

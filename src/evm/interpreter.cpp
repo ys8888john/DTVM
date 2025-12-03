@@ -93,7 +93,8 @@ void BaseInterpreter::interpret() {
       Frame = Context.getCurFrame();
       if (!Frame) {
         const auto &ReturnData = Context.getReturnData();
-        evmc::Result ExeResult(EVMC_SUCCESS, Frame ? Frame->Msg->gas : 0,
+        const uint64_t GasLeft = Context.getInstance()->getGas();
+        evmc::Result ExeResult(EVMC_SUCCESS, GasLeft,
                                Context.getInstance()->getGasRefund(),
                                ReturnData.data(), ReturnData.size());
         Context.setExeResult(std::move(ExeResult));
@@ -466,7 +467,8 @@ void BaseInterpreter::interpret() {
       Frame = Context.getCurFrame();
       if (!Frame) {
         const auto &ReturnData = Context.getReturnData();
-        evmc::Result ExeResult(EVMC_SUCCESS, 0,
+        const uint64_t GasLeft = Context.getInstance()->getGas();
+        evmc::Result ExeResult(EVMC_SUCCESS, GasLeft,
                                Context.getInstance()->getGasRefund(),
                                ReturnData.data(), ReturnData.size());
         Context.setExeResult(std::move(ExeResult));
@@ -480,7 +482,8 @@ void BaseInterpreter::interpret() {
       Frame = Context.getCurFrame();
       if (!Frame) {
         const auto &ReturnData = Context.getReturnData();
-        evmc::Result ExeResult(EVMC_REVERT, 0,
+        const uint64_t GasLeft = Context.getInstance()->getGas();
+        evmc::Result ExeResult(EVMC_REVERT, GasLeft,
                                Context.getInstance()->getGasRefund(),
                                ReturnData.data(), ReturnData.size());
         Context.setExeResult(std::move(ExeResult));
@@ -499,7 +502,8 @@ void BaseInterpreter::interpret() {
       Frame = Context.getCurFrame();
       if (!Frame) {
         const auto &ReturnData = Context.getReturnData();
-        evmc::Result ExeResult(EVMC_SUCCESS, 0,
+        const uint64_t GasLeft = Context.getInstance()->getGas();
+        evmc::Result ExeResult(EVMC_SUCCESS, GasLeft,
                                Context.getInstance()->getGasRefund(),
                                ReturnData.data(), ReturnData.size());
         Context.setExeResult(std::move(ExeResult));
