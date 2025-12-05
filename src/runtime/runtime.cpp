@@ -672,6 +672,9 @@ void Runtime::callEVMInInterpMode(EVMInstance &Inst, evmc_message &Msg,
 
 void Runtime::callEVMMain(EVMInstance &Inst, evmc_message &Msg,
                           evmc::Result &Result) {
+#ifdef ZEN_ENABLE_LINUX_PERF
+  auto Timer = Stats.startRecord(utils::StatisticPhase::Execution);
+#endif
   evmc_message MsgWithCode = Msg;
   MsgWithCode.code = reinterpret_cast<uint8_t *>(Inst.getModule()->Code);
   MsgWithCode.code_size = Inst.getModule()->CodeSize;
@@ -692,6 +695,9 @@ void Runtime::callEVMMain(EVMInstance &Inst, evmc_message &Msg,
         zen::utils::toHex(Result.output_data, Result.output_size);
     ZEN_LOG_INFO("output: 0x%s", output.c_str());
   }
+#ifdef ZEN_ENABLE_LINUX_PERF
+  Stats.stopRecord(Timer);
+#endif
 }
 #endif // ZEN_ENABLE_EVM
 
