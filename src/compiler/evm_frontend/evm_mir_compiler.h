@@ -378,6 +378,7 @@ public:
                            Operand RetOffsetOp, Operand RetSizeOp);
   void handleRevert(Operand OffsetOp, Operand SizeOp);
   void handleInvalid();
+  void handleTrap(ErrorCode ErrCode);
   Operand handleKeccak256(Operand OffsetComponents, Operand LengthComponents);
   Operand handleSLoad(Operand KeyComponents);
   void handleSStore(Operand KeyComponents, Operand ValueComponents);
@@ -424,6 +425,7 @@ private:
 
   MInstruction *getInstanceStackTopInt(MInstruction *StackSize);
   MInstruction *getInstanceStackPeekInt(int32_t IndexFromTop);
+  void drainGas();
 
   // Create a full U256 operand from intx::uint256 value
   Operand createU256ConstOperand(const intx::uint256 &V);
