@@ -675,6 +675,7 @@ void Runtime::callEVMMain(EVMInstance &Inst, evmc_message &Msg,
 #ifdef ZEN_ENABLE_LINUX_PERF
   auto Timer = Stats.startRecord(utils::StatisticPhase::Execution);
 #endif
+  Inst.clearMessageCache();
   evmc_message MsgWithCode = Msg;
   MsgWithCode.code = reinterpret_cast<uint8_t *>(Inst.getModule()->Code);
   MsgWithCode.code_size = Inst.getModule()->CodeSize;

@@ -126,6 +126,7 @@ public:
   };
 
   ExecutionCache &getMessageCache() { return InstanceExecutionCache; }
+  void clearMessageCache() { InstanceExecutionCache = ExecutionCache{}; }
   void setReturnData(std::vector<uint8_t> Data) {
     ReturnData = std::move(Data);
   }
