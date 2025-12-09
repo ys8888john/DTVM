@@ -49,12 +49,7 @@ class TestCase:
 class TestRunner:
     """Main test runner class"""
 
-    # TODO: Failed cases in EVM multipass, temporarily ignored
     IGNORE_CASES = {
-        "add_stack_underflow.evm.hex", # stack exception handle
-        "invalid_jump.evm.hex",        # exception handle
-        "invalid_jumpi.evm.hex",       # exception handle
-        "stack_overflow.evm.hex",      # stack exception handle
     }
 
     def __init__(self, args):
