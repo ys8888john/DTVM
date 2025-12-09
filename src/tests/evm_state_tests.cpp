@@ -36,7 +36,7 @@ namespace {
 const bool DEBUG = false;
 const bool PRINT_FAILURE_DETAILS = true;
 // TODO: RunMode selection logic will be refactored in the future.
-constexpr common::RunMode STATE_TEST_RUN_MODE = common::RunMode::MultipassMode;
+constexpr common::RunMode STATE_TEST_RUN_MODE = common::RunMode::InterpMode;
 
 // Revision filter configuration
 // Set to EVMC_MAX_REVISION to run all tests, or a specific revision to filter

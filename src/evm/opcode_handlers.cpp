@@ -1274,7 +1274,9 @@ void CallHandler::doExecute() {
   // Note: The base gas cost (WARM_STORAGE_READ_COST = 100) is already charged
   // in execute(). We only need to charge the ADDITIONAL cost for cold access.
   const auto Rev = currentRevision();
-  if (Rev >= EVMC_BERLIN and
+  const bool CoinbaseIsWarm =
+      Rev >= EVMC_SHANGHAI && Dest == Frame->getTxContext().block_coinbase;
+  if (Rev >= EVMC_BERLIN && !CoinbaseIsWarm &&
       Frame->Host->access_account(Dest) == EVMC_ACCESS_COLD) {
     // Charge additional cold access cost (2600 - 100 = 2500)
     if (!chargeGas(Frame,

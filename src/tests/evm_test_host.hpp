@@ -22,6 +22,7 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include <cstdio>
 
 using namespace zen;
 using namespace zen::runtime;
@@ -156,6 +157,11 @@ public:
     }
 
     const uint64_t TotalIntrinsicGas = AccessListIntrinsicGas + TxDataIntrinsicGas;
+
+    // EIP-3651: coinbase is warm starting from Shanghai
+    if (ActiveRevision >= EVMC_SHANGHAI) {
+      access_account(tx_context.block_coinbase);
+    }
 
     // Deduct access list intrinsic gas from available gas
     if (GasLimit < TotalIntrinsicGas) {
@@ -296,6 +302,10 @@ public:
       ZEN_LOG_DEBUG(
           "No contract found for code address {}, return parent result",
           evmc::hex(evmc::bytes_view(CodeAddr.bytes, 20)).c_str());
+      if (ParentResult.status_code == EVMC_SUCCESS &&
+          ParentResult.gas_left == 0) {
+        ParentResult.gas_left = Msg.gas;
+      }
       return ParentResult;
     }
 
@@ -361,6 +371,18 @@ public:
       }
       int64_t RemainingGas = static_cast<int64_t>(Inst->getGas());
       int64_t GasRefund = static_cast<int64_t>(Inst->getGasRefund());
+      if (std::getenv("TRACE_WARM_COINBASE")) {
+        const auto ErrCode = Inst->getError().getCode();
+        std::fprintf(stderr,
+                     "[TRACE_WARM_COINBASE] depth=%d kind=%d to=%s gas=%lld "
+                     "status=%d gas_left=%lld err=%u\n",
+                     Msg.depth, static_cast<int>(Msg.kind),
+                     evmc::hex(evmc::bytes_view(Msg.recipient.bytes, 20)).c_str(),
+                     static_cast<long long>(Msg.gas),
+                     static_cast<int>(ExecResult.status_code),
+                     static_cast<long long>(RemainingGas),
+                     static_cast<unsigned>(ErrCode));
+      }
       if (shouldRevertState(ExecResult.status_code)) {
         restoreHostState(StateSnapshot);
       }

@@ -922,6 +922,11 @@ static uint64_t evmHandleCallInternal(zen::runtime::EVMInstance *Instance,
       .code_size = 0,
   };
 
+  // Ensure the callee has enough gas to cover intrinsic execution cost
+  if (CallMsg.gas < static_cast<int64_t>(zen::evm::BASIC_EXECUTION_COST)) {
+    CallMsg.gas += static_cast<int64_t>(zen::evm::BASIC_EXECUTION_COST);
+  }
+
   Instance->pushMessage(&CallMsg);
   evmc::Result Result = Module->Host->call(CallMsg);
   Instance->popMessage();
