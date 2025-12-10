@@ -569,6 +569,10 @@ private:
   MFunction *CurFunc = nullptr;
   MBasicBlock *CurBB = nullptr;
   MBasicBlock *ReturnBB = nullptr;
+#ifdef ZEN_ENABLE_LINUX_PERF
+  uint64_t CurPC = 0;
+  uint32_t CurInstrIdx = 0;
+#endif
 
   // Instance address for JIT function calls
   MInstruction *InstanceAddr = nullptr;

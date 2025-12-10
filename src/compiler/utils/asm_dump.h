@@ -6,6 +6,6 @@
 
 namespace COMPILER {
 
-void dumpAsm(const char *Buf, size_t Size);
+void dumpAsm(const char *Buf, size_t Size, uint8_t *CodePtr = nullptr);
 
 } // namespace COMPILER

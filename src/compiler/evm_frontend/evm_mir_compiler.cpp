@@ -92,6 +92,11 @@ void EVMMirBuilder::initEVM(CompilerContext *Context) {
   if (Ctx.isGasMeteringEnabled()) {
     meterGas(zen::evm::BASIC_EXECUTION_COST);
   }
+#ifdef ZEN_ENABLE_LINUX_PERF
+  CurBB->setSourceOffset(1);
+  CurBB->setSourceName("MAIN_ENTRY");
+  CurPC = 0;
+#endif // ZEN_ENABLE_LINUX_PERF
 }
 
 void EVMMirBuilder::finalizeEVMBase() {
@@ -571,6 +576,12 @@ void EVMMirBuilder::implementIndirectJump(MInstruction *JumpTarget,
     return;
   }
 
+#ifdef ZEN_ENABLE_LINUX_PERF
+  CurBB->setSourceOffset(CurPC);
+  CurBB->setSourceName("SWITCH" + std::to_string(CurInstrIdx));
+  CurInstrIdx++;
+#endif // ZEN_ENABLE_LINUX_PERF
+
   MType *UInt64Type =
       EVMFrontendContext::getMIRTypeFromEVMType(EVMType::UINT64);
 
@@ -702,6 +713,12 @@ void EVMMirBuilder::handleJumpDest(const uint64_t &PC) {
     }
   }
   setInsertBlock(DestBB);
+#ifdef ZEN_ENABLE_LINUX_PERF
+  CurBB->setSourceOffset(PC);
+  CurBB->setSourceName("JUMPDEST");
+  CurPC = PC;
+  CurInstrIdx = 0;
+#endif // ZEN_ENABLE_LINUX_PERF
 }
 
 // ==================== Arithmetic Instruction Handlers ====================

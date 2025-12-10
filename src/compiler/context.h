@@ -120,6 +120,7 @@ public:
 #ifdef ZEN_ENABLE_LINUX_PERF
   // Only for perf
   CompileUnorderedMap<uint32_t, uint64_t> FuncSizeMap{ThreadMemPool};
+  CompileUnorderedMap<uint32_t, std::string> FuncNameMap{ThreadMemPool};
 #endif
   CompileVector<ExternRelocations> ExternRelocs{ThreadMemPool};
 

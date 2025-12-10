@@ -66,8 +66,8 @@ void EagerEVMJITCompiler::compile() {
 
 #ifdef ZEN_ENABLE_LINUX_PERF
   utils::JitDumpWriter JitDumpWriter;
-#define JIT_DUMP_WRITE_FUNC(FuncIdx, FuncAddr, FuncSize)                       \
-  JitDumpWriter.writeFunc("EVM_Main", reinterpret_cast<uint64_t>(FuncAddr),    \
+#define JIT_DUMP_WRITE_FUNC(FuncName, FuncAddr, FuncSize)                      \
+  JitDumpWriter.writeFunc(FuncName, reinterpret_cast<uint64_t>(FuncAddr),      \
                           FuncSize)
 #else
 #define JIT_DUMP_WRITE_FUNC(...)
@@ -83,9 +83,17 @@ void EagerEVMJITCompiler::compile() {
 
   uint8_t *JITFuncPtr = Ctx.CodePtr + Ctx.FuncOffsetMap[0];
   EVMMod->setJITCodeAndSize(JITFuncPtr, Ctx.CodeSize);
-  JIT_DUMP_WRITE_FUNC(0, JITFuncPtr, Ctx.FuncSizeMap[0]);
-  // EVM single function - no function pointer tracking needed
-
+#ifdef ZEN_ENABLE_LINUX_PERF
+  // Write block symbols instead of EVM_Main
+  // JIT_DUMP_WRITE_FUNC("EVM_Main", JITFuncPtr, Ctx.FuncSizeMap[0]);
+  for (const auto &[BBIdx, BBSymOffset] : Ctx.FuncOffsetMap) {
+    if (BBIdx == 0) {
+      continue;
+    }
+    uint8_t *BBCode = Ctx.CodePtr + BBSymOffset;
+    JIT_DUMP_WRITE_FUNC(Ctx.FuncNameMap[BBIdx], BBCode, Ctx.FuncSizeMap[BBIdx]);
+  }
+#endif
   size_t CodeSize = CodeMPool.getMemEnd() - JITCode;
   platform::mprotect(JITCode, TO_MPROTECT_CODE_SIZE(CodeSize),
                      PROT_READ | PROT_EXEC);

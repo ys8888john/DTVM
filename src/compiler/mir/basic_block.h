@@ -74,6 +74,14 @@ public:
 #ifdef ZEN_ENABLE_EVM
   void setJumpDestBB(const bool &IsJumpDest) { JumpDestBBFlag = IsJumpDest; }
   bool isJumpDestBB() const { return JumpDestBBFlag; }
+
+#ifdef ZEN_ENABLE_LINUX_PERF
+  void setSourceOffset(uint64_t Offset) { SourceOffset = Offset; }
+  uint64_t getSourceOffset() const { return SourceOffset; }
+
+  void setSourceName(const std::string &Name) { SourceName = Name; }
+  std::string getSourceName() const { return SourceName; }
+#endif // ZEN_ENABLE_LINUX_PERF
 #endif // ZEN_ENABLE_EVM
 
 private:
@@ -84,6 +92,10 @@ private:
   CompileVector<MBasicBlock *> Successors;
 #ifdef ZEN_ENABLE_EVM
   bool JumpDestBBFlag = false;
+#ifdef ZEN_ENABLE_LINUX_PERF
+  uint64_t SourceOffset = 0;
+  std::string SourceName;
+#endif // ZEN_ENABLE_LINUX_PERF
 #endif // ZEN_ENABLE_EVM
 };
 

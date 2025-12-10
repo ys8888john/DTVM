@@ -26,7 +26,7 @@
 #include "llvm/Support/SmallVectorMemoryBuffer.h"
 #include <deque>
 
-#ifdef ZEN_ENABLE_MULTIPASS_JIT_LOGGING
+#if defined(ZEN_ENABLE_MULTIPASS_JIT_LOGGING) || defined(ZEN_ENABLE_LINUX_PERF)
 #include "utils/asm_dump.h"
 #endif
 
@@ -192,6 +192,10 @@ void JITCompilerBase::emitObjectBuffer(CompileContext *Ctx) {
 #ifdef ZEN_ENABLE_LINUX_PERF
   auto &FuncSizeMap = Ctx->FuncSizeMap;
   FuncSizeMap.reserve(NumSymbols);
+#ifdef ZEN_ENABLE_EVM
+  Ctx->FuncNameMap.reserve(NumSymbols);
+  uint32_t BBSymIdx = 1;
+#endif
 #endif
   for (const auto &Sym : Obj.symbols()) {
     // Get symbol flags
@@ -222,6 +226,12 @@ void JITCompilerBase::emitObjectBuffer(CompileContext *Ctx) {
       continue;
     }
 
+#if defined(ZEN_ENABLE_EVM) && defined(ZEN_ENABLE_LINUX_PERF)
+    // Skip non-EVMBB symbols
+    if (!NameOrErr->startswith("EVMBB")) {
+      continue;
+    }
+#else
     // Skip non-JIT function symbols
     if (!NameOrErr->startswith(JIT_FUNCTION_NAME_PREFIX)) {
       continue;
@@ -231,6 +241,7 @@ void JITCompilerBase::emitObjectBuffer(CompileContext *Ctx) {
     if (NameOrErr->substr(FuncSymbolPrefixLen).getAsInteger(10, FuncIdx)) {
       continue;
     }
+#endif
 
     // Get symbol section
     llvm::object::section_iterator SI = Obj.section_end();
@@ -252,6 +263,16 @@ void JITCompilerBase::emitObjectBuffer(CompileContext *Ctx) {
     // Get symbol offset
     uint64_t SymOffset = *AddressOrErr - SI->getAddress();
 
+#if defined(ZEN_ENABLE_EVM) && defined(ZEN_ENABLE_LINUX_PERF)
+    if (NameOrErr->startswith("EVMBB")) {
+      FuncSizeMap[BBSymIdx] = llvm::object::ELFSymbolRef(Sym).getSize();
+      FuncOffsetMap[BBSymIdx] = SymOffset;
+      Ctx->FuncNameMap[BBSymIdx] = NameOrErr->str();
+      BBSymIdx++;
+      continue;
+    }
+#endif
+
 #ifdef ZEN_ENABLE_LINUX_PERF
     FuncSizeMap[FuncIdx] = llvm::object::ELFSymbolRef(Sym).getSize();
 #endif
@@ -268,6 +289,11 @@ void JITCompilerBase::emitObjectBuffer(CompileContext *Ctx) {
     ExternRelocs.reserve(NumRelocs);
     for (const auto &Reloc : RelSection->relocations()) {
       int64_t Addend = 0;
+#if defined(ZEN_ENABLE_EVM) && defined(ZEN_ENABLE_LINUX_PERF)
+      if (Reloc.getType() != llvm::ELF::R_X86_64_PLT32) {
+        continue;
+      }
+#endif
       ZEN_ASSERT(Reloc.getType() == llvm::ELF::R_X86_64_PLT32);
       if (auto AddendOrErr =
               llvm::object::ELFRelocationRef(Reloc).getAddend()) {
@@ -323,6 +349,12 @@ void JITCompilerBase::emitObjectBuffer(CompileContext *Ctx) {
     throw getError(ErrorCode::ObjectFileResolvingFailed);
   }
   std::memcpy(Ctx->CodePtr, CodeOrErr->data(), Ctx->CodeSize);
+
+#if defined(ZEN_ENABLE_EVM) && defined(ZEN_ENABLE_LINUX_PERF) &&               \
+    !defined(ZEN_ENABLE_MULTIPASS_JIT_LOGGING)
+  dumpAsm(ObjectToLoad->getBufferStart(), ObjectToLoad->getBufferSize(),
+          Ctx->CodePtr);
+#endif
 }
 
 void WasmJITCompiler::compileWasmToMC(WasmFrontendContext &Ctx, MModule &Mod,

@@ -203,9 +203,18 @@ llvm::MCSymbol *CgBasicBlock::getSymbol() const {
     const CgFunction *MF = getParent();
     MCContext &Ctx = MF->getMCContext();
     const StringRef Prefix = Ctx.getAsmInfo()->getPrivateLabelPrefix();
+#if defined(ZEN_ENABLE_EVM) && defined(ZEN_ENABLE_LINUX_PERF)
+    std::string BlockComment =
+        getSourceName().empty()
+            ? std::to_string(getNumber())
+            : getSourceName() + "_" + std::to_string(getSourceOffset());
+    BlockSymbol = Ctx.getOrCreateSymbol(
+        "EVMBB" + Twine(MF->getFunction().getFuncIdx()) + "_" + BlockComment);
+#else
     BlockSymbol = Ctx.getOrCreateSymbol(Twine(Prefix) + "BB" +
                                         Twine(MF->getFunction().getFuncIdx()) +
                                         "_" + Twine(getNumber()));
+#endif
   }
   return BlockSymbol;
 }

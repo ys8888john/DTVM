@@ -34,6 +34,12 @@ public:
     Streamer = std::move(*StreamerOrErr);
     TM.getObjFileLowering()->Initialize(Context, TM);
     Streamer->initSections(false, *STI);
+#if defined(ZEN_ENABLE_LINUX_PERF) && defined(ZEN_ENABLE_EVM)
+    // Because actual dwarf source is evm bytecode, set to ./evm-bytecode
+    // as a placeholder whether or not this file exists.
+    // fileNo: 1, directive: ".", filename: "evm-bytecode"
+    Streamer->emitDwarfFileDirective(1, ".", "evm-bytecode");
+#endif // ZEN_ENABLE_LINUX_PERF
   }
 
   void finalize() {
@@ -57,6 +63,17 @@ protected:
 
 #ifdef ZEN_ENABLE_LINUX_PERF
     if (TM.getMCAsmInfo()->hasDotTypeDotSizeDirective()) {
+#ifdef ZEN_ENABLE_EVM
+      // If last BB has emitSymbolAttribute in emitBasicBlock, emit its ELFSize
+      if (LastBBSymbol) {
+        llvm::MCSymbol *BlockEndSym = Context.createTempSymbol();
+        Streamer->emitLabel(BlockEndSym);
+        const llvm::MCExpr *SizeExp = llvm::MCBinaryExpr::createSub(
+            MCSymbolRefExpr::create(BlockEndSym, Context),
+            MCSymbolRefExpr::create(LastBBSymbol, Context), Context);
+        Streamer->emitELFSize(LastBBSymbol, SizeExp);
+      }
+#endif
       llvm::MCSymbol *FuncEndSym = Context.createTempSymbol();
       Streamer->emitLabel(FuncEndSym);
       const llvm::MCExpr *SizeExp = llvm::MCBinaryExpr::createSub(
@@ -70,9 +87,36 @@ protected:
   }
 
   void emitBasicBlock(CgBasicBlock *MBB) {
+    bool Emitted = false;
+#if defined(ZEN_ENABLE_LINUX_PERF) && defined(ZEN_ENABLE_EVM)
+    if (!MBB->getSourceName().empty()) {
+      // Emit dwarf location in source file
+      Streamer->emitDwarfLocDirective(1, // fileNo
+                                      MBB->getSourceOffset(),
+                                      0,     // column
+                                      0,     // flags
+                                      0,     // isa (unused)
+                                      false, // discriminator
+                                      MBB->getSourceName());
+      // Emit block symbol attribute as MCSA_ELF_TypeFunction
+      Streamer->emitSymbolAttribute(MBB->getSymbol(),
+                                    llvm::MCSA_ELF_TypeFunction);
+      Streamer->emitLabel(MBB->getSymbol());
+      Emitted = true;
+      // Treat current BB as LastBB's end and emit size of LastBB
+      if (LastBBSymbol && TM.getMCAsmInfo()->hasDotTypeDotSizeDirective()) {
+        const llvm::MCExpr *SizeExp = llvm::MCBinaryExpr::createSub(
+            MCSymbolRefExpr::create(MBB->getSymbol(), Context),
+            MCSymbolRefExpr::create(LastBBSymbol, Context), Context);
+        Streamer->emitELFSize(LastBBSymbol, SizeExp);
+      }
+      LastBBSymbol = MBB->getSymbol();
+    }
+#endif
     // Refer to the following URL:
     // https://github.com/llvm/llvm-project/blob/release%2F15.x/llvm/lib/CodeGen/AsmPrinter/AsmPrinter.cpp#L3629-L3642
-    if (!MBB->pred_empty() && (!isBlockOnlyReachableByFallthrough(MBB))) {
+    if (!MBB->pred_empty() && (!isBlockOnlyReachableByFallthrough(MBB)) &&
+        !Emitted) {
       Streamer->emitLabel(MBB->getSymbol());
     }
     for (CgInstruction &MI : *MBB) {
@@ -159,6 +203,10 @@ protected:
 
   // Following fields are used for single function lowering
   CgFunction *MF = nullptr;
+
+#if defined(ZEN_ENABLE_LINUX_PERF) && defined(ZEN_ENABLE_EVM)
+  MCSymbol *LastBBSymbol = nullptr;
+#endif
 };
 
 } // namespace COMPILER

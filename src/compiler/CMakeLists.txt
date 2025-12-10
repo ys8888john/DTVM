@@ -99,7 +99,7 @@ if(ZEN_ENABLE_EVM)
   )
 endif()
 
-if(ZEN_ENABLE_JIT_LOGGING)
+if(ZEN_ENABLE_JIT_LOGGING OR ZEN_ENABLE_LINUX_PERF)
   list(APPEND COMPILER_SRCS utils/asm_dump.cpp)
 endif()
 
