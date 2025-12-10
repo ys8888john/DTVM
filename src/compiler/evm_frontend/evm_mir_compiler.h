@@ -161,6 +161,7 @@ public:
 
   // Complete jump implementation with jump table
   void createJumpTable();
+  void implementConstantJump(uint64_t ConstDest, MBasicBlock *FailureBB);
   void implementIndirectJump(MInstruction *JumpTarget, MBasicBlock *FailureBB);
 
   void releaseOperand(Operand Opnd) {}
