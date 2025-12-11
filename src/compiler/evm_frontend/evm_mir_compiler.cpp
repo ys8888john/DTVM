@@ -335,7 +335,6 @@ void EVMMirBuilder::stackPush(Operand PushValue) {
   const int32_t StackSizeOffset =
       zen::runtime::EVMInstance::getEVMStackSizeOffset();
   MInstruction *StackSize = getInstanceElement(I64Type, StackSizeOffset);
-  MInstruction *StackTopInt = getInstanceStackTopInt(StackSize);
 
   // TODO: handle EVMStackOverflow
   MBasicBlock *StackOverflowBB =
@@ -360,20 +359,17 @@ void EVMMirBuilder::stackPush(Operand PushValue) {
   addSuccessor(StoreBB);
   setInsertBlock(StoreBB);
 
-  // Load stack data from StackPtr
+  // Save stack data to StackTopPtr
   const int32_t InnerOffsets[EVM_ELEMENTS_COUNT] = {0, 8, 16, 24};
+  MInstruction *StackTopInt = getInstanceStackTopInt(StackSize);
+  MInstruction *StackTopPtr = createInstruction<ConversionInstruction>(
+      false, OP_inttoptr, U64PtrType, StackTopInt);
 
   // Save stack data
   for (size_t I = 0; I < EVM_ELEMENTS_COUNT; ++I) {
-    MInstruction *InnerOffset =
-        createIntConstInstruction(I64Type, InnerOffsets[I]);
-    MInstruction *IndexedAddr = createInstruction<BinaryInstruction>(
-        false, OP_add, &Ctx.I64Type, StackTopInt, InnerOffset);
-    MInstruction *IndexedPtr = createInstruction<ConversionInstruction>(
-        false, OP_inttoptr, U64PtrType, IndexedAddr);
-    // Store to StackPtr + CurrentSize + I * 8
+    // Store to StackTopPtr + I * 8
     createInstruction<StoreInstruction>(true, &Ctx.VoidType, PushComponents[I],
-                                        IndexedPtr);
+                                        StackTopPtr, InnerOffsets[I]);
   }
   // Update stack size
   setInstanceElement(I64Type, NewSize, StackSizeOffset);
@@ -387,7 +383,6 @@ typename EVMMirBuilder::Operand EVMMirBuilder::stackPop() {
   const int32_t StackSizeOffset =
       zen::runtime::EVMInstance::getEVMStackSizeOffset();
   MInstruction *StackSize = getInstanceElement(I64Type, StackSizeOffset);
-  MInstruction *StackTopInt = getInstanceStackTopInt(StackSize);
 
   // Handle EVMStackUnderflow in exception BB
   MBasicBlock *StackUnderflowBB =
@@ -412,23 +407,19 @@ typename EVMMirBuilder::Operand EVMMirBuilder::stackPop() {
   setInsertBlock(LoadBB);
 
   // Load stack data from StackPtr (top -32, -24, -16, -8)
-  const int32_t SubInnerOffsets[EVM_ELEMENTS_COUNT] = {32, 24, 16, 8};
+  const int32_t SubInnerOffsets[EVM_ELEMENTS_COUNT] = {-32, -24, -16, -8};
   U256Inst PopComponents = {};
+  MInstruction *StackTopInt = getInstanceStackTopInt(StackSize);
+  MInstruction *StackTopPtr = createInstruction<ConversionInstruction>(
+      false, OP_inttoptr, U64PtrType, StackTopInt);
 
   for (size_t I = 0; I < EVM_ELEMENTS_COUNT; ++I) {
-    MInstruction *SubInnerOffset =
-        createIntConstInstruction(I64Type, SubInnerOffsets[I]);
-    MInstruction *IndexedAddr = createInstruction<BinaryInstruction>(
-        false, OP_sub, &Ctx.I64Type, StackTopInt, SubInnerOffset);
-    MInstruction *IndexedPtr = createInstruction<ConversionInstruction>(
-        false, OP_inttoptr, U64PtrType, IndexedAddr);
-    // Load from StackPtr + NewSize + I * 8
-    PopComponents[I] =
-        createInstruction<LoadInstruction>(false, I64Type, IndexedPtr);
+    // Load from StackPtr - SubInnerOffsets[I]
+    PopComponents[I] = createInstruction<LoadInstruction>(
+        false, I64Type, StackTopPtr, 1, nullptr, SubInnerOffsets[I]);
   }
   // Update stack size
   setInstanceElement(I64Type, NewSize, StackSizeOffset);
-
   return Operand(PopComponents, EVMType::UINT256);
 }
 
@@ -439,20 +430,16 @@ void EVMMirBuilder::stackSet(int32_t IndexFromTop, Operand SetValue) {
   MPointerType *U64PtrType = MPointerType::create(Ctx, Ctx.I64Type);
 
   MInstruction *PeekBase = getInstanceStackPeekInt(IndexFromTop);
+  MInstruction *PeekPtr = createInstruction<ConversionInstruction>(
+      false, OP_inttoptr, U64PtrType, PeekBase);
 
   // Stack offset from peek base
   const int32_t InnerOffsets[EVM_ELEMENTS_COUNT] = {0, 8, 16, 24};
   // Save stack data
   for (size_t I = 0; I < EVM_ELEMENTS_COUNT; ++I) {
-    MInstruction *InnerOffset =
-        createIntConstInstruction(I64Type, InnerOffsets[I]);
-    MInstruction *IndexedAddr = createInstruction<BinaryInstruction>(
-        false, OP_add, &Ctx.I64Type, PeekBase, InnerOffset);
-    MInstruction *IndexedPtr = createInstruction<ConversionInstruction>(
-        false, OP_inttoptr, U64PtrType, IndexedAddr);
-    // Store to StackPtr + CurrentSize + I * 8
+    // Store to PeekPtr + I * 8
     createInstruction<StoreInstruction>(true, &Ctx.VoidType, SetComponents[I],
-                                        IndexedPtr);
+                                        PeekPtr, InnerOffsets[I]);
   }
 }
 
@@ -462,23 +449,19 @@ typename EVMMirBuilder::Operand EVMMirBuilder::stackGet(int32_t IndexFromTop) {
   MPointerType *U64PtrType = MPointerType::create(Ctx, Ctx.I64Type);
 
   MInstruction *PeekBase = getInstanceStackPeekInt(IndexFromTop);
+  MInstruction *PeekPtr = createInstruction<ConversionInstruction>(
+      false, OP_inttoptr, U64PtrType, PeekBase);
 
   // Stack offset from peek base
   const int32_t InnerOffsets[EVM_ELEMENTS_COUNT] = {0, 8, 16, 24};
   U256Inst GetComponents = {};
   // Load stack data
   for (size_t I = 0; I < EVM_ELEMENTS_COUNT; ++I) {
-    MInstruction *InnerOffset =
-        createIntConstInstruction(I64Type, InnerOffsets[I]);
-    MInstruction *IndexedAddr = createInstruction<BinaryInstruction>(
-        false, OP_add, &Ctx.I64Type, PeekBase, InnerOffset);
-    MInstruction *IndexedPtr = createInstruction<ConversionInstruction>(
-        false, OP_inttoptr, U64PtrType, IndexedAddr);
-    // Load from StackPtr + NewSize + I * 8
-    MInstruction *LoadInstr =
-        createInstruction<LoadInstruction>(false, I64Type, IndexedPtr);
+    // Load from PeekPtr + I * 8
+    MInstruction *LoadInstr = createInstruction<LoadInstruction>(
+        false, I64Type, PeekPtr, 1, nullptr, InnerOffsets[I]);
     Variable *ValVar = storeInstructionInTemp(LoadInstr, I64Type);
-    // Load from StackPtr + NewSize + I * 8
+    // Load from PeekPtr + I * 8
     GetComponents[I] = loadVariable(ValVar);
   }
   return Operand(GetComponents, EVMType::UINT256);
