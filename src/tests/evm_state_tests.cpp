@@ -33,10 +33,10 @@ using namespace zen::evm_test_utils;
 
 namespace {
 
-const bool DEBUG = false;
+const bool DEBUG = true;
 const bool PRINT_FAILURE_DETAILS = true;
 // TODO: RunMode selection logic will be refactored in the future.
-constexpr common::RunMode STATE_TEST_RUN_MODE = common::RunMode::InterpMode;
+constexpr common::RunMode STATE_TEST_RUN_MODE = common::RunMode::MultipassMode;
 
 // Revision filter configuration
 // Set to EVMC_MAX_REVISION to run all tests, or a specific revision to filter
@@ -132,6 +132,9 @@ ExecutionResult executeStateTest(const StateTestFixture &Fixture,
     ParsedTransaction PT =
         createTransactionFromIndex(*Fixture.Transaction, ExpectedResult);
 
+    const bool IsCreateTx =
+        PT.Message->kind == EVMC_CREATE || PT.Message->kind == EVMC_CREATE2;
+
     // Find the target account (contract to call)
     const ParsedAccount *TargetAccount = nullptr;
     for (const auto &PA : Fixture.PreState) {
@@ -141,7 +144,7 @@ ExecutionResult executeStateTest(const StateTestFixture &Fixture,
       }
     }
 
-    if (!TargetAccount) {
+    if (!TargetAccount && !IsCreateTx) {
       if (!ExpectedResult.ExpectedException.empty()) {
         return {true, {}};
       }
@@ -157,7 +160,7 @@ ExecutionResult executeStateTest(const StateTestFixture &Fixture,
     }
 
     // Skip if no code to execute
-    if (TargetAccount->Account.code.empty()) {
+    if (!IsCreateTx && TargetAccount->Account.code.empty()) {
       if (DEBUG) {
         std::cout << "No code to execute for test: " << Fixture.TestName
                   << std::endl;
@@ -194,8 +197,13 @@ ExecutionResult executeStateTest(const StateTestFixture &Fixture,
 
     ZenMockedEVMHost::TransactionExecutionConfig ExecConfig;
     ExecConfig.ModuleName = Fixture.TestName;
-    ExecConfig.Bytecode = TargetAccount->Account.code.data();
-    ExecConfig.BytecodeSize = TargetAccount->Account.code.size();
+    if (IsCreateTx) {
+      ExecConfig.Bytecode = PT.CallData.data();
+      ExecConfig.BytecodeSize = PT.CallData.size();
+    } else {
+      ExecConfig.Bytecode = TargetAccount->Account.code.data();
+      ExecConfig.BytecodeSize = TargetAccount->Account.code.size();
+    }
     ExecConfig.Message = *PT.Message;
     ExecConfig.Revision = mapForkToRevision(Fork);
 

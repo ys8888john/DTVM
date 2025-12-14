@@ -106,7 +106,9 @@ public:
       Result.ErrorMessage = "Runtime is not attached to ZenMockedEVMHost";
       return Result;
     }
-    if (!Config.Bytecode || Config.BytecodeSize == 0) {
+    const bool IsCreateTx = Config.Message.kind == EVMC_CREATE ||
+                            Config.Message.kind == EVMC_CREATE2;
+    if ((!Config.Bytecode || Config.BytecodeSize == 0) && !IsCreateTx) {
       Result.ErrorMessage = "Bytecode buffer is empty";
       return Result;
     }
@@ -134,10 +136,13 @@ public:
     constexpr uint64_t ACCESS_LIST_ADDRESS_COST = 2400;
     constexpr uint64_t ACCESS_LIST_STORAGE_KEY_COST = 1900;
     constexpr uint64_t TX_DATA_ZERO_GAS = 4;
+    constexpr uint64_t TX_CREATE_COST = 32000;
     const uint64_t TxDataNonZeroGas =
         ActiveRevision >= EVMC_ISTANBUL ? 16 : 68;
     uint64_t AccessListIntrinsicGas = 0;
     uint64_t TxDataIntrinsicGas = 0;
+    uint64_t InitcodeIntrinsicGas = 0;
+    uint64_t CreateIntrinsicGas = 0;
 
     if (ActiveRevision >= EVMC_BERLIN) {
       for (const auto &AccessEntry : Config.AccessList) {
@@ -156,7 +161,37 @@ public:
       }
     }
 
-    const uint64_t TotalIntrinsicGas = AccessListIntrinsicGas + TxDataIntrinsicGas;
+    if (IsCreateTx) {
+      CreateIntrinsicGas = TX_CREATE_COST;
+    }
+
+    if (IsCreateTx && ActiveRevision >= EVMC_SHANGHAI) {
+      const uint64_t InitcodeSize =
+          static_cast<uint64_t>(Config.Message.input_size);
+      if (InitcodeSize > MAX_SIZE_OF_INITCODE) {
+        Result.Success = true;
+        Result.Status = EVMC_OUT_OF_GAS;
+        Result.RemainingGas = 0;
+        Result.GasUsed = GasLimit;
+        Result.GasRefund = 0;
+        Result.GasCharged = Result.GasUsed;
+        settleGasCharges(Result.GasCharged, Config, Config.Message, Result);
+        return Result;
+      }
+      constexpr uint64_t INITCODE_WORD_COST = 2;
+      const uint64_t InitcodeWords = (InitcodeSize + 31) / 32;
+      if (InitcodeWords >
+          std::numeric_limits<uint64_t>::max() / INITCODE_WORD_COST) {
+        Result.ErrorMessage = "Initcode size too large";
+        return Result;
+      }
+      InitcodeIntrinsicGas = InitcodeWords * INITCODE_WORD_COST;
+    }
+
+    const uint64_t TotalIntrinsicGas = AccessListIntrinsicGas +
+                                       TxDataIntrinsicGas +
+                                       InitcodeIntrinsicGas +
+                                       CreateIntrinsicGas;
 
     // EIP-3651: coinbase is warm starting from Shanghai
     if (ActiveRevision >= EVMC_SHANGHAI) {
@@ -165,10 +200,71 @@ public:
 
     // Deduct access list intrinsic gas from available gas
     if (GasLimit < TotalIntrinsicGas) {
-      Result.ErrorMessage = "Insufficient gas for intrinsic transaction costs";
+      Result.Success = true;
+      Result.Status = EVMC_OUT_OF_GAS;
+      Result.RemainingGas = 0;
+      Result.GasUsed = GasLimit;
+      Result.GasRefund = 0;
+      Result.GasCharged = Result.GasUsed;
+      settleGasCharges(Result.GasCharged, Config, Config.Message, Result);
       return Result;
     }
     uint64_t AvailableGas = GasLimit - TotalIntrinsicGas;
+
+    evmc_message Msg = Config.Message;
+    Msg.gas = static_cast<int64_t>(AvailableGas);
+
+    // Warm access list addresses and storage slots
+    for (const auto &AccessEntry : Config.AccessList) {
+      access_account(AccessEntry.Address);
+
+      auto AccountIt = accounts.find(AccessEntry.Address);
+      if (AccountIt != accounts.end()) {
+        for (const auto &StorageKey : AccessEntry.StorageKeys) {
+          auto &StorageSlot = AccountIt->second.storage[StorageKey];
+          StorageSlot.access_status = EVMC_ACCESS_WARM;
+        }
+      }
+    }
+
+    if (IsCreateTx) {
+      auto CreateResult = handleCreate(Msg);
+
+      if (CreateResult.output_data && CreateResult.output_size > 0) {
+        ReturnData.assign(CreateResult.output_data,
+                          CreateResult.output_data + CreateResult.output_size);
+      } else {
+        ReturnData.clear();
+      }
+
+      Result.Status = CreateResult.status_code;
+      Result.Success = true;
+      Result.RemainingGas = CreateResult.gas_left;
+      const uint64_t GasLeft =
+          Result.RemainingGas > 0 ? static_cast<uint64_t>(Result.RemainingGas)
+                                  : 0;
+      Result.GasUsed = AvailableGas > GasLeft ? AvailableGas - GasLeft : 0;
+      Result.GasUsed += TotalIntrinsicGas;
+      uint64_t GasRefund = static_cast<uint64_t>(
+          std::max<int64_t>(0, CreateResult.gas_refund));
+      uint64_t RefundLimit = Result.GasUsed / 5;
+      Result.GasRefund = std::min(GasRefund, RefundLimit);
+      Result.GasCharged =
+          Result.GasUsed > Result.GasRefund ? Result.GasUsed - Result.GasRefund
+                                            : 0;
+      if (Result.GasCharged != 0) {
+        settleGasCharges(Result.GasCharged, Config, Msg, Result);
+      }
+      return Result;
+    }
+
+    static const uint8_t STOP_BYTE = 0x00;
+    const uint8_t *BytecodePtr = Config.Bytecode;
+    size_t BytecodeSize = Config.BytecodeSize;
+    if (BytecodeSize == 0) {
+      BytecodePtr = &STOP_BYTE;
+      BytecodeSize = 1;
+    }
 
     uint64_t Counter = ModuleCounter++;
     std::string ModuleName = Config.ModuleName.empty()
@@ -177,7 +273,7 @@ public:
                                     std::to_string(Counter));
 
     auto ModRet =
-        RT->loadEVMModule(ModuleName, Config.Bytecode, Config.BytecodeSize);
+        RT->loadEVMModule(ModuleName, BytecodePtr, BytecodeSize);
     if (!ModRet) {
       Result.ErrorMessage = "Failed to load EVM module: " + ModuleName;
       return Result;
@@ -200,22 +296,7 @@ public:
     EVMInstance *Inst = *InstRet;
     Inst->setRevision(ActiveRevision);
 
-    evmc_message Msg = Config.Message;
-    Msg.gas = static_cast<int64_t>(AvailableGas);
     uint64_t OriginalGas = static_cast<uint64_t>(Inst->getGas());
-
-    // Warm access list addresses and storage slots
-    for (const auto &AccessEntry : Config.AccessList) {
-      access_account(AccessEntry.Address);
-
-      auto AccountIt = accounts.find(AccessEntry.Address);
-      if (AccountIt != accounts.end()) {
-        for (const auto &StorageKey : AccessEntry.StorageKeys) {
-          auto &StorageSlot = AccountIt->second.storage[StorageKey];
-          StorageSlot.access_status = EVMC_ACCESS_WARM;
-        }
-      }
-    }
 
     auto StateSnapshot = captureHostState();
     if (!applyPreExecutionState(Msg, Result)) {
@@ -257,8 +338,9 @@ public:
             ? OriginalGas - static_cast<uint64_t>(Result.RemainingGas)
             : 0;
 
-    // Add access list intrinsic gas to GasUsed (EIP-2930)
-    Result.GasUsed += AccessListIntrinsicGas + TxDataIntrinsicGas;
+    // Add intrinsic gas components (EIP-2930 / EIP-3860)
+    Result.GasUsed += AccessListIntrinsicGas + TxDataIntrinsicGas +
+                     InitcodeIntrinsicGas;
 
     uint64_t GasRefund =
         static_cast<uint64_t>(std::max<int64_t>(0, Inst->getGasRefund()));
@@ -499,7 +581,14 @@ public:
           "evm_create_mod_" +
           evmc::hex(evmc::bytes_view(Msg.recipient.bytes, 20)) + "_" +
           std::to_string(Counter);
-      auto ModRet = RT->loadEVMModule(ModName, Msg.input_data, Msg.input_size);
+      static const uint8_t STOP_BYTE = 0x00;
+      const uint8_t *InitcodePtr = Msg.input_data;
+      size_t InitcodeSize = Msg.input_size;
+      if (InitcodeSize == 0) {
+        InitcodePtr = &STOP_BYTE;
+        InitcodeSize = 1;
+      }
+      auto ModRet = RT->loadEVMModule(ModName, InitcodePtr, InitcodeSize);
       if (!ModRet) {
         restoreHostState(StateSnapshot);
         ZEN_LOG_ERROR("Failed to load EVM module: {}", ModName.c_str());
@@ -567,12 +656,20 @@ public:
       }
 
       int64_t RemainingGas = static_cast<int64_t>(Inst->getGas());
+      const bool OverInitcodeLimit =
+          Revision >= EVMC_SHANGHAI &&
+          Msg.input_size > MAX_SIZE_OF_INITCODE;
       const int64_t GasRefund =
           static_cast<int64_t>(Inst->getGasRefund());
 
       // 6 Deploy the contract code (the output is the runtime code)
       if (ExecResult.status_code != EVMC_SUCCESS) {
         restoreHostState(StateSnapshot);
+        auto SenderIt = accounts.find(Msg.sender);
+        if (SenderIt != accounts.end() &&
+            (Msg.kind == EVMC_CREATE || Msg.kind == EVMC_CREATE2)) {
+          SenderIt->second.nonce++;
+        }
         evmc::Result Failure(ExecResult.status_code, RemainingGas, GasRefund);
         Failure.create_address = NewAddr;
         return Failure;
@@ -588,7 +685,12 @@ public:
         const uint64_t CodeDepositCost =
             CODE_DEPOSIT_COST_PER_BYTE * ReturnData.size();
         if (RemainingGas < static_cast<int64_t>(CodeDepositCost)) {
-          accounts.erase(NewAddr);
+          restoreHostState(StateSnapshot);
+          auto SenderIt = accounts.find(Msg.sender);
+          if (SenderIt != accounts.end() &&
+              (Msg.kind == EVMC_CREATE || Msg.kind == EVMC_CREATE2)) {
+            SenderIt->second.nonce++;
+          }
           evmc::Result Failure(EVMC_OUT_OF_GAS, 0, 0);
           Failure.create_address = NewAddr;
           return Failure;
