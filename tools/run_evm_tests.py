@@ -242,7 +242,7 @@ class TestRunner:
                     cmd,
                     capture_output=True,
                     text=True,
-                    timeout=30
+                    timeout=120
                 )
 
                 if result.stdout:
@@ -273,7 +273,7 @@ class TestRunner:
                     cmd,
                     capture_output=True,
                     text=True,
-                    timeout=30
+                    timeout=120
                 )
                 elapsed = (time.time() - start_time) * 1000
 

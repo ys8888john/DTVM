@@ -428,7 +428,7 @@ private:
   StoreInstruction *setInstanceElement(MType *ValueType, MInstruction *Value,
                                        int32_t Offset);
 
-  MInstruction *getInstanceStackTopInt(MInstruction *StackSize);
+  MInstruction *getInstanceStackTopInt();
   MInstruction *getInstanceStackPeekInt(int32_t IndexFromTop);
   void drainGas();
 
@@ -591,6 +591,8 @@ private:
 
   // Stack check block for stack overflow/underflow checking
   MBasicBlock *StackCheckBB = nullptr;
+  Variable *StackTopVar = nullptr;
+  Variable *StackSizeVar = nullptr;
 
   // ==================== Interface Helper Methods ====================
 
