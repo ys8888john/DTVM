@@ -99,10 +99,14 @@ char *load_wasm_file(const char *path, size_t &size)
     }
     std::streamsize file_size = file.tellg();
     char* content = (char*)malloc(file_size);
+    if (!content) {
+        return NULL;
+    }
 
     file.seekg(0, std::ios::beg);
     if (!file.read(content, file_size)) {
         file.close();
+        free(content);
         return NULL;
     }
     file.close();
