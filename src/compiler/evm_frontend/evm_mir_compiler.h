@@ -589,6 +589,10 @@ private:
   std::map<uint64_t, MBasicBlock *> JumpDestTable;
   MBasicBlock *DefaultJumpBB = nullptr; // For invalid jump destinations
 
+  std::map<uint64_t, std::vector<MBasicBlock *>> JumpHashTable;
+  std::map<uint64_t, std::vector<uint64_t>> JumpHashReverse;
+  uint64_t HashMask = 0;
+
   // Stack check block for stack overflow/underflow checking
   MBasicBlock *StackCheckBB = nullptr;
   Variable *StackTopVar = nullptr;
