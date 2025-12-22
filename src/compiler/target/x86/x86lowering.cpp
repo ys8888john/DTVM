@@ -1322,6 +1322,85 @@ void X86CgLowering::lowerSwitchStmt(const SwitchInstruction &Inst) {
     return;
   }
 
+#ifdef ZEN_ENABLE_EVM
+  // When NumCases is large, use binary search
+  static constexpr uint32_t MinBinarySearchCases = 8;
+  if (NumCases > MinBinarySearchCases) {
+    // Sort the case list by case value
+    for (uint32_t I = 0; I < NumCases - 1; I++) {
+      for (uint32_t J = 0; J < NumCases - I - 1; J++) {
+        if (CaseImmList[J] > CaseImmList[J + 1]) {
+          std::swap(CaseImmList[J], CaseImmList[J + 1]);
+          std::swap(CaseMBBList[J], CaseMBBList[J + 1]);
+        }
+      }
+    }
+
+    // Binary search context for iteration
+    struct BinarySearchContext {
+      CgBasicBlock *BB;
+      uint32_t StartIdx;
+      uint32_t EndIdx;
+    };
+    CompileVector<BinarySearchContext> SearchBlocks(MF->getContext().MemPool);
+
+    // Initial search context
+    SearchBlocks.push_back({nullptr, 0, NumCases - 1});
+
+    // Binary search
+    while (!SearchBlocks.empty()) {
+      BinarySearchContext Context = SearchBlocks.back();
+      SearchBlocks.pop_back();
+      CgBasicBlock *CurrentBB = Context.BB;
+      uint32_t StartIdx = Context.StartIdx;
+      uint32_t EndIdx = Context.EndIdx;
+      if (CurrentBB) {
+        setInsertBlock(CurrentBB);
+      }
+
+      if (StartIdx == EndIdx) {
+        // Only one case
+        fastEmitNoDefInst_ri(X86::CMP32ri, OperandReg, CaseImmList[StartIdx]);
+        fastEmitCondBranch(CaseMBBList[StartIdx], X86::CondCode::COND_E);
+        fastEmitBranch(DefaultMBB);
+      } else if (EndIdx - StartIdx == 1) {
+        // Two cases
+        fastEmitNoDefInst_ri(X86::CMP32ri, OperandReg, CaseImmList[StartIdx]);
+        fastEmitCondBranch(CaseMBBList[StartIdx], X86::CondCode::COND_E);
+
+        startNewBlockAfterBranch();
+        fastEmitNoDefInst_ri(X86::CMP32ri, OperandReg, CaseImmList[EndIdx]);
+        fastEmitCondBranch(CaseMBBList[EndIdx], X86::CondCode::COND_E);
+        fastEmitBranch(DefaultMBB);
+      } else {
+        // Divide if more than 2 cases left
+        uint32_t MidIdx = StartIdx + (EndIdx - StartIdx) / 2;
+        int64_t MidValue = CaseImmList[MidIdx];
+
+        // Compare with the middile value
+        fastEmitNoDefInst_ri(X86::CMP32ri, OperandReg, MidValue);
+        fastEmitCondBranch(CaseMBBList[MidIdx], X86::CondCode::COND_E);
+
+        startNewBlockAfterBranch();
+        fastEmitNoDefInst_ri(X86::CMP32ri, OperandReg, MidValue);
+        // Create less branch basic block
+        CgBasicBlock *LessBB = MF->createCgBasicBlock();
+        fastEmitCondBranch(LessBB, X86::CondCode::COND_L);
+        CurBB->addSuccessorWithoutProb(LessBB);
+        SearchBlocks.push_back({LessBB, StartIdx, MidIdx - 1});
+
+        // Create greater branch basic block
+        CgBasicBlock *GreaterBB = MF->createCgBasicBlock();
+        fastEmitBranch(GreaterBB);
+        CurBB->addSuccessorWithoutProb(GreaterBB);
+        SearchBlocks.push_back({GreaterBB, MidIdx + 1, EndIdx});
+      }
+    }
+    fastEmitBranch(DefaultMBB);
+    return;
+  }
+#endif // ZEN_ENABLE_EVM
+
   // Use naive compare and jump pattern
   for (uint32_t I = 0; I < NumCases; ++I) {
     fastEmitNoDefInst_ri(X86::CMP32ri, OperandReg, CaseImmList[I]);
