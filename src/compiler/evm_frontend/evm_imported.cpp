@@ -28,6 +28,14 @@ evmc::address loadAddressFromLE(const uint8_t *AddressLE) {
   }
   return Addr;
 }
+evmc::bytes32 loadBytes32FromLE(const uint8_t *BytesLE) {
+  evmc::bytes32 Out{};
+  constexpr size_t Size = sizeof(Out.bytes);
+  for (size_t I = 0; I < Size; ++I) {
+    Out.bytes[I] = BytesLE[Size - 1 - I];
+  }
+  return Out;
+}
 constexpr int64_t numWords(uint64_t Size) noexcept {
   /// The size of the EVM 256-bit word.
   constexpr auto WORD_SIZE = 32;
@@ -750,6 +758,9 @@ const uint8_t *evmHandleCreateInternal(zen::runtime::EVMInstance *Instance,
   ZEN_ASSERT(Msg && "No current message set in EVMInstance");
 
   evmc_revision Rev = Instance->getRevision();
+  if (Rev >= EVMC_SHANGHAI && Size > zen::evm::MAX_SIZE_OF_INITCODE) {
+    Instance->chargeGas(Instance->getGas() + 1);
+  }
   uint64_t InitCodeWordCost = 0;
   if (CallKind == EVMC_CREATE2) {
     InitCodeWordCost += 6;
@@ -789,7 +800,7 @@ const uint8_t *evmHandleCreateInternal(zen::runtime::EVMInstance *Instance,
 
   // Set salt for CREATE2
   if (CallKind == EVMC_CREATE2 && Salt != nullptr) {
-    std::memcpy(CreateMsg.create2_salt.bytes, Salt, 32);
+    CreateMsg.create2_salt = loadBytes32FromLE(Salt);
   }
 
   Instance->pushMessage(&CreateMsg);
@@ -801,10 +812,12 @@ const uint8_t *evmHandleCreateInternal(zen::runtime::EVMInstance *Instance,
   uint64_t GasLeft =
       Result.gas_left > 0 ? static_cast<uint64_t>(Result.gas_left) : 0;
   uint64_t GasUsed = ProvidedGas > GasLeft ? ProvidedGas - GasLeft : 0;
-  if (GasUsed >= zen::evm::BASIC_EXECUTION_COST) {
-    GasUsed -= zen::evm::BASIC_EXECUTION_COST;
-  } else {
-    GasUsed = 0;
+  if (GasLeft > 0) {
+    if (GasUsed >= zen::evm::BASIC_EXECUTION_COST) {
+      GasUsed -= zen::evm::BASIC_EXECUTION_COST;
+    } else {
+      GasUsed = 0;
+    }
   }
   if (GasUsed != 0) {
     Instance->chargeGas(GasUsed);
@@ -937,7 +950,7 @@ static uint64_t evmHandleCallInternal(zen::runtime::EVMInstance *Instance,
       Result.gas_left > 0 ? static_cast<uint64_t>(Result.gas_left) : 0;
   uint64_t GasUsed = CallGas > GasLeft ? CallGas - GasLeft : 0;
   if (GasUsed > 0) {
-    if (Module->Host->get_code_size(CallMsg.code_address) > 0 &&
+    if (GasLeft > 0 && Module->Host->get_code_size(CallMsg.code_address) > 0 &&
         GasUsed >= zen::evm::BASIC_EXECUTION_COST) {
       GasUsed -= zen::evm::BASIC_EXECUTION_COST;
     }

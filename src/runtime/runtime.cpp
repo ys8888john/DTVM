@@ -819,6 +819,8 @@ void Runtime::callEVMInJITMode(EVMInstance &Inst, evmc_message &Msg,
       return EVMC_STACK_UNDERFLOW;
     case ErrorCode::EVMBadJumpDestination:
       return EVMC_BAD_JUMP_DESTINATION;
+    case ErrorCode::GasLimitExceeded:
+      return EVMC_OUT_OF_GAS;
     case ErrorCode::OutOfBoundsMemory:
       return EVMC_INVALID_MEMORY_ACCESS;
     case ErrorCode::EVMInvalidInstruction:
