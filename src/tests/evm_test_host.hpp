@@ -358,7 +358,14 @@ public:
     }
     evmc::Result ParentResult = evmc::MockedHost::call(Msg);
 
-    if (precompile::isModExpPrecompile(Msg.recipient)) {
+    const evmc::address &PrecompileAddr =
+        (Msg.kind == EVMC_CALLCODE || Msg.kind == EVMC_DELEGATECALL)
+            ? Msg.code_address
+            : Msg.recipient;
+    if (precompile::isBlake2bPrecompile(PrecompileAddr, Revision)) {
+      return precompile::executeBlake2b(Msg, ReturnData);
+    }
+    if (precompile::isModExpPrecompile(PrecompileAddr)) {
       return precompile::executeModExp(Msg, Revision, ReturnData);
     }
 
