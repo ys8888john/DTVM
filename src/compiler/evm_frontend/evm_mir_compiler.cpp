@@ -311,12 +311,42 @@ void EVMMirBuilder::meterGas(uint64_t GasCost) {
   createInstruction<StoreInstruction>(true, &Ctx.VoidType, NewGas, MsgGasPtr);
 }
 
-void EVMMirBuilder::createStackCheckBlock() {
+void EVMMirBuilder::createStackCheckBlock(int32_t MinSize, int32_t MaxSize) {
   // Create a new basic block for stack checking
-}
+  MType *I64Type = EVMFrontendContext::getMIRTypeFromEVMType(EVMType::UINT64);
+  // Get runtime stack size
+  MInstruction *StackSize = loadVariable(StackSizeVar);
+  if (MinSize > 0) {
+    MInstruction *MinSizeConst =
+        createIntConstInstruction(I64Type, MinSize * 32);
+    // Check if StackSize less than MinSize
+    MInstruction *IsUnderflow = createInstruction<CmpInstruction>(
+        false, CmpInstruction::ICMP_ULT, &Ctx.I64Type, StackSize, MinSizeConst);
+    // Handle EVMStackUnderflow in exception BB
+    MBasicBlock *StackUnderflowBB = CurFunc->getOrCreateExceptionSetBB(
+        common::ErrorCode::EVMStackUnderflow);
+    MBasicBlock *MaxCheckBB = createBasicBlock();
+    createInstruction<BrIfInstruction>(true, Ctx, IsUnderflow, StackUnderflowBB,
+                                       MaxCheckBB);
+    addUniqueSuccessor(StackUnderflowBB);
+    addSuccessor(MaxCheckBB);
+    setInsertBlock(MaxCheckBB);
+  }
 
-void EVMMirBuilder::updateStackCheckBlock(int32_t MinSize, int32_t MaxSize) {
-  // Add checks in stack check BB
+  MInstruction *MaxSizeConst = createIntConstInstruction(I64Type, MaxSize * 32);
+  // Check if StackSize greater than MaxSize
+  MInstruction *IsOverflow = createInstruction<CmpInstruction>(
+      false, CmpInstruction::ICMP_UGT, &Ctx.I64Type, StackSize, MaxSizeConst);
+  // Handle EVMStackOverflow in exception BB
+  MBasicBlock *StackOverflowBB =
+      CurFunc->getOrCreateExceptionSetBB(common::ErrorCode::EVMStackOverflow);
+  // Handle EVMStackOverflow in exception BB
+  MBasicBlock *FollowBB = createBasicBlock();
+  createInstruction<BrIfInstruction>(true, Ctx, IsOverflow, StackOverflowBB,
+                                     FollowBB);
+  addUniqueSuccessor(StackOverflowBB);
+  addSuccessor(FollowBB);
+  setInsertBlock(FollowBB);
 }
 
 MInstruction *EVMMirBuilder::getInstanceStackTopInt() {
@@ -333,19 +363,6 @@ MInstruction *EVMMirBuilder::getInstanceStackPeekInt(int32_t IndexFromTop) {
   int32_t ConstOffset = (IndexFromTop + 1) * 32;
   MInstruction *TopOffset = createIntConstInstruction(I64Type, ConstOffset);
 
-  // Check if IndexFromTop exceeds stack size
-  MInstruction *IsUnderflow = createInstruction<CmpInstruction>(
-      false, CmpInstruction::ICMP_UGT, &Ctx.I64Type, TopOffset, StackSize);
-  // Handle EVMStackOverflow in exception BB
-  MBasicBlock *StackUnderflowBB =
-      CurFunc->getOrCreateExceptionSetBB(common::ErrorCode::EVMStackUnderflow);
-  MBasicBlock *FollowBB = createBasicBlock();
-  createInstruction<BrIfInstruction>(true, Ctx, IsUnderflow, StackUnderflowBB,
-                                     FollowBB);
-  addUniqueSuccessor(StackUnderflowBB);
-  addSuccessor(FollowBB);
-  setInsertBlock(FollowBB);
-
   MInstruction *PeekBase = createInstruction<BinaryInstruction>(
       false, OP_sub, &Ctx.I64Type, StackTopInt, TopOffset);
   return PeekBase;
@@ -360,28 +377,10 @@ void EVMMirBuilder::stackPush(Operand PushValue) {
   // Get runtime stack size from variable
   MInstruction *StackSize = loadVariable(StackSizeVar);
 
-  // TODO: handle EVMStackOverflow
-  MBasicBlock *StackOverflowBB =
-      CurFunc->getOrCreateExceptionSetBB(common::ErrorCode::EVMStackOverflow);
-
   // NewSize = StackSize + 32
   MInstruction *Const32 = createIntConstInstruction(I64Type, 32);
   MInstruction *NewSize = createInstruction<BinaryInstruction>(
       false, OP_add, I64Type, StackSize, Const32);
-
-  // Check if NewSize exceeds stack boundary
-  MInstruction *StackBoundary = createIntConstInstruction(
-      I64Type, zen::runtime::EVMInstance::EVMStackCapacity);
-  MInstruction *IsOverflow = createInstruction<CmpInstruction>(
-      false, CmpInstruction::ICMP_UGT, &Ctx.I64Type, NewSize, StackBoundary);
-
-  // Handle EVMStackOverflow in exception BB
-  MBasicBlock *StoreBB = createBasicBlock();
-  createInstruction<BrIfInstruction>(true, Ctx, IsOverflow, StackOverflowBB,
-                                     StoreBB);
-  addUniqueSuccessor(StackOverflowBB);
-  addSuccessor(StoreBB);
-  setInsertBlock(StoreBB);
 
   // Save stack data to StackTopPtr
   const int32_t InnerOffsets[EVM_ELEMENTS_COUNT] = {0, 8, 16, 24};
@@ -412,27 +411,10 @@ typename EVMMirBuilder::Operand EVMMirBuilder::stackPop() {
   // Get runtime stack size from instance
   MInstruction *StackSize = loadVariable(StackSizeVar);
 
-  // Handle EVMStackUnderflow in exception BB
-  MBasicBlock *StackUnderflowBB =
-      CurFunc->getOrCreateExceptionSetBB(common::ErrorCode::EVMStackUnderflow);
-
   // NewSize = StackSize - 32
   MInstruction *Const32 = createIntConstInstruction(I64Type, 32);
   MInstruction *NewSize = createInstruction<BinaryInstruction>(
       false, OP_sub, I64Type, StackSize, Const32);
-
-  // If NewSize < 0, goto exception BB
-  MInstruction *Zero = createIntConstInstruction(I64Type, 0);
-  MInstruction *IsUnderflow = createInstruction<CmpInstruction>(
-      false, CmpInstruction::ICMP_SLT, &Ctx.I64Type, NewSize, Zero);
-
-  // Handle it in exception BB
-  MBasicBlock *LoadBB = createBasicBlock();
-  createInstruction<BrIfInstruction>(true, Ctx, IsUnderflow, StackUnderflowBB,
-                                     LoadBB);
-  addUniqueSuccessor(StackUnderflowBB);
-  addSuccessor(LoadBB);
-  setInsertBlock(LoadBB);
 
   // Load stack data from StackPtr (top -32, -24, -16, -8)
   const int32_t SubInnerOffsets[EVM_ELEMENTS_COUNT] = {-32, -24, -16, -8};

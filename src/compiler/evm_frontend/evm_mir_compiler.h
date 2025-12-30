@@ -183,8 +183,7 @@ public:
   void releaseOperand(Operand Opnd) {}
 
   // Block for stack check instructions
-  void createStackCheckBlock();
-  void updateStackCheckBlock(int32_t MinSize, int32_t MaxSize);
+  void createStackCheckBlock(int32_t MinSize, int32_t MaxSize);
 
   // ==================== Stack Instruction Handlers ====================
 

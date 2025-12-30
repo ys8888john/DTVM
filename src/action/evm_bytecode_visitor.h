@@ -4,6 +4,7 @@
 #ifndef ZEN_ACTION_EVM_BYTECODE_VISITOR_H
 #define ZEN_ACTION_EVM_BYTECODE_VISITOR_H
 
+#include "compiler/evm_frontend/evm_analyzer.h"
 #include "compiler/evm_frontend/evm_mir_compiler.h"
 #include "evmc/evmc.h"
 #include "evmc/instructions.h"
@@ -34,23 +35,9 @@ public:
 private:
   static constexpr size_t EVM_MAX_STACK_SIZE = 1024;
 
-  void push(const Operand &Opnd) {
-    CurStackOffset++;
-    if (CurStackOffset > MaxStackOffset) {
-      MaxStackOffset = CurStackOffset;
-      if (static_cast<size_t>(MaxStackOffset) > EVM_MAX_STACK_SIZE) {
-        // Detect stack overflow within a block
-        throw getError(common::ErrorCode::EVMStackOverflow);
-      }
-    }
-    Stack.push(Opnd);
-  }
+  void push(const Operand &Opnd) { Stack.push(Opnd); }
 
   Operand pop() {
-    CurStackOffset--;
-    if (CurStackOffset < MinStackOffset) {
-      MinStackOffset = CurStackOffset;
-    }
     Operand Opnd;
     if (Stack.empty()) {
       Opnd = Builder.stackPop();
@@ -66,6 +53,10 @@ private:
       const uint8_t *Bytecode =
           reinterpret_cast<const uint8_t *>(Ctx->getBytecode());
       size_t BytecodeSize = Ctx->getBytecodeSize();
+      EVMAnalyzer Analyzer;
+      Analyzer.analyze(Bytecode, BytecodeSize);
+      handleBeginBlock(Analyzer);
+
       const uint8_t *Ip = Bytecode;
       const uint8_t *IpEnd = Bytecode + BytecodeSize;
       bool LastStop = false;
@@ -567,6 +558,7 @@ private:
           Operand Cond = pop();
           handleEndBlock();
           Builder.handleJumpI(Dest, Cond);
+          handleBeginBlock(Analyzer);
           break;
         }
 
@@ -574,6 +566,7 @@ private:
           InDeadCode = false;
           handleEndBlock();
           Builder.handleJumpDest(PC);
+          handleBeginBlock(Analyzer);
           Builder.meterOpcode(Opcode, PC);
           break;
         }
@@ -644,8 +637,15 @@ private:
     return true;
   }
 
-  void handleBeginBlock() {
-    //
+  void handleBeginBlock(EVMAnalyzer &Analyzer) {
+    const auto &BlockInfos = Analyzer.getBlockInfos();
+    ZEN_ASSERT(BlockInfos.count(PC) > 0 && "Block info not found");
+    const auto &BlockInfo = BlockInfos.at(PC);
+    if (BlockInfo.MaxStackHeight > EVM_MAX_STACK_SIZE) {
+      throw getError(common::ErrorCode::EVMStackOverflow);
+    }
+    Builder.createStackCheckBlock(-BlockInfo.MinStackHeight,
+                                  1024 - BlockInfo.MaxStackHeight);
   }
 
   void handleEndBlock() {
@@ -659,9 +659,6 @@ private:
       Operand Opnd = ReverseStack.pop();
       Builder.stackPush(Opnd);
     }
-    CurStackOffset = 0;
-    MinStackOffset = 0;
-    MaxStackOffset = 0;
   }
 
   void handleStop() { Builder.handleStop(); }
@@ -932,10 +929,6 @@ private:
   CompilerContext *Ctx;
   EvalStack Stack;
   bool InDeadCode = false;
-  // Min and max stack offset within a block
-  int32_t MinStackOffset = 0;
-  int32_t MaxStackOffset = 0;
-  int32_t CurStackOffset = 0;
   uint64_t PC = 0;
 };
 
