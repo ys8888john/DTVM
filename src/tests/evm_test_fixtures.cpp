@@ -158,6 +158,28 @@ std::vector<StateTestFixture> parseStateTestFile(const std::string &FilePath) {
         Fixture.Environment.block_prev_randao =
             parseBytes32(Env["currentRandom"].GetString());
       }
+
+      if (Env.HasMember("currentExcessBlobGas") &&
+          Env["currentExcessBlobGas"].IsString()) {
+        std::string ExcessStr =
+            stripHexPrefix(Env["currentExcessBlobGas"].GetString());
+        uint64_t ExcessBlobGas =
+            std::stoull(ExcessStr.empty() ? "0" : ExcessStr, nullptr, 16);
+        if (ExcessBlobGas == 0) {
+          Fixture.Environment.blob_base_fee = parseUint256("0x01");
+        }
+      }
+    }
+
+    if (TestCase.HasMember("config")) {
+      const rapidjson::Value &Config = TestCase["config"];
+      if (Config.HasMember("chainid") && Config["chainid"].IsString()) {
+        Fixture.Environment.chain_id =
+            parseUint256(Config["chainid"].GetString());
+      } else if (Config.HasMember("chainId") && Config["chainId"].IsString()) {
+        Fixture.Environment.chain_id =
+            parseUint256(Config["chainId"].GetString());
+      }
     }
 
     if (TestCase.HasMember("transaction")) {
@@ -343,6 +365,22 @@ createTransactionFromIndex(const rapidjson::Document &Transaction,
         PT.AuthorizationListSize = AuthListForIndex.Size();
       }
     }
+  }
+
+  if (Transaction.HasMember("blobVersionedHashes") &&
+      Transaction["blobVersionedHashes"].IsArray()) {
+    const rapidjson::Value &BlobHashes = Transaction["blobVersionedHashes"];
+    for (rapidjson::SizeType I = 0; I < BlobHashes.Size(); ++I) {
+      if (BlobHashes[I].IsString()) {
+        PT.BlobHashes.push_back(parseBytes32(BlobHashes[I].GetString()));
+      }
+    }
+  }
+
+  if (Transaction.HasMember("maxFeePerBlobGas") &&
+      Transaction["maxFeePerBlobGas"].IsString()) {
+    PT.MaxFeePerBlobGas =
+        parseUint256(Transaction["maxFeePerBlobGas"].GetString());
   }
 
   return PT;

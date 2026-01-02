@@ -75,7 +75,6 @@ void EVMInstance::setExecutionError(const Error &NewErr, uint32_t IgnoredDepth,
                                     common::evm_traphandler::EVMTrapState TS) {
   ZEN_ASSERT(NewErr.getPhase() == common::ErrorPhase::Execution);
   setError(NewErr);
-
   if (NewErr.getCode() == ErrorCode::GasLimitExceeded) {
     setGas(0); // gas left
   }

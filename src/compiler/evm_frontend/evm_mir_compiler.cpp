@@ -241,16 +241,6 @@ StoreInstruction *EVMMirBuilder::setInstanceElement(MType *ValueType,
 }
 
 void EVMMirBuilder::meterOpcode(evmc_opcode Opcode, uint64_t PC) {
-  if (!Ctx.isGasMeteringEnabled()) {
-    return;
-  }
-  if (GasChunkEnd && GasChunkCost && PC < GasChunkSize) {
-    if (GasChunkEnd[PC] > PC) {
-      meterGas(GasChunkCost[PC]);
-    }
-    return;
-  }
-
   const uint8_t Index = static_cast<uint8_t>(Opcode);
   const auto &Metrics = InstructionMetrics[Index];
   meterGas(static_cast<uint64_t>(Metrics.gas_cost));
@@ -2399,10 +2389,9 @@ EVMMirBuilder::callRuntimeFor(RetType (*RuntimeFunc)(runtime::EVMInstance *)) {
   MInstruction *InstancePtr = getCurrentInstancePointer();
 
   MType *ReturnType = getMIRReturnType<RetType>();
-  constexpr bool IS_VOID_RET = std::is_same_v<RetType, void>;
-
+  const bool IsStmt = std::is_same_v<RetType, void>;
   MInstruction *CallInstr = createInstruction<ICallInstruction>(
-      IS_VOID_RET, ReturnType, FuncAddrInst,
+      IsStmt, ReturnType, FuncAddrInst,
       llvm::ArrayRef<MInstruction *>(InstancePtr));
 
   return convertCallResult<RetType>(CallInstr);
@@ -2603,10 +2592,9 @@ EVMMirBuilder::Operand EVMMirBuilder::callRuntimeFor(
   PushAll(PushAll, std::integral_constant<std::size_t, 0>{});
 
   MType *ReturnType = getMIRReturnType<RetType>();
-  constexpr bool IS_VOID_RET = std::is_same_v<RetType, void>;
-  MInstruction *CallInstr =
-      createInstruction<ICallInstruction>(IS_VOID_RET, ReturnType, FuncAddrInst,
-                                          llvm::ArrayRef<MInstruction *>{Args});
+  const bool IsStmt = std::is_same_v<RetType, void>;
+  MInstruction *CallInstr = createInstruction<ICallInstruction>(
+      IsStmt, ReturnType, FuncAddrInst, llvm::ArrayRef<MInstruction *>{Args});
 
   return convertCallResult<RetType>(CallInstr);
 }

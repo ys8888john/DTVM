@@ -12,6 +12,8 @@
 #include "utils/evm.h"
 #include "utils/rlp_encoding.h"
 
+#include <unordered_set>
+
 using namespace zen;
 using namespace zen::runtime;
 
@@ -38,6 +40,8 @@ private:
   std::vector<uint8_t> ReturnData;
   static inline std::atomic<uint64_t> ModuleCounter = 0;
   evmc_revision Revision = zen::evm::DEFAULT_REVISION;
+  std::unordered_map<evmc::address, std::unordered_set<evmc::bytes32>>
+      PrewarmStorageKeys;
 
 public:
   struct AccountInitEntry {
@@ -59,6 +63,7 @@ public:
     uint64_t GasLimitMultiplier = 1;
     uint64_t IntrinsicGas = 0;
     std::optional<evmc::uint256be> MaxPriorityFeePerGas;
+    std::optional<evmc::uint256be> MaxFeePerBlobGas;
     std::vector<AccessListEntry> AccessList;
     evmc_revision Revision = zen::evm::DEFAULT_REVISION;
   };
@@ -85,6 +90,7 @@ public:
     if (ClearExisting) {
       accounts.clear();
       recorded_logs.clear();
+      PrewarmStorageKeys.clear();
     }
     for (const auto &Entry : Accounts) {
       accounts[Entry.Address] = Entry.Account;
@@ -138,11 +144,17 @@ public:
     for (const auto &AccessEntry : Config.AccessList) {
       access_account(AccessEntry.Address);
 
-      auto AccountIt = accounts.find(AccessEntry.Address);
-      if (AccountIt != accounts.end()) {
+      auto AccIt = accounts.find(AccessEntry.Address);
+      if (AccIt != accounts.end()) {
+        auto &Account = AccIt->second;
         for (const auto &StorageKey : AccessEntry.StorageKeys) {
-          auto &StorageSlot = AccountIt->second.storage[StorageKey];
+          auto &StorageSlot = Account.storage[StorageKey];
           StorageSlot.access_status = EVMC_ACCESS_WARM;
+        }
+      } else {
+        auto &Keys = PrewarmStorageKeys[AccessEntry.Address];
+        for (const auto &StorageKey : AccessEntry.StorageKeys) {
+          Keys.insert(StorageKey);
         }
       }
     }
@@ -235,7 +247,6 @@ public:
       ReturnData.clear();
       return Result;
     }
-
     if (shouldRevertState(ExecResult.status_code)) {
       restoreHostState(StateSnapshot);
       auto &SenderAccount = accounts[Msg.sender];
@@ -530,6 +541,7 @@ public:
       auto &NewAcc = accounts[NewAddr];
       NewAcc.nonce = Revision >= EVMC_SPURIOUS_DRAGON ? 1 : 0;
       NewAcc.balance = evmc::bytes32{0};
+      applyPrewarmedStorageKeys(NewAddr, NewAcc);
 
       // 4 Transfer the balance (from the sender to the new account)
       auto &SenderAcc = accounts[Msg.sender];
@@ -672,6 +684,19 @@ private:
     }
   }
 
+  void applyPrewarmedStorageKeys(const evmc::address &Addr,
+                                 evmc::MockedAccount &Account) {
+    auto It = PrewarmStorageKeys.find(Addr);
+    if (It == PrewarmStorageKeys.end()) {
+      return;
+    }
+    for (const auto &Key : It->second) {
+      auto &StorageSlot = Account.storage[Key];
+      StorageSlot.access_status = EVMC_ACCESS_WARM;
+    }
+    PrewarmStorageKeys.erase(It);
+  }
+
   bool applyPreExecutionState(const evmc_message &Msg,
                               TransactionExecutionResult &Result) {
     auto &SenderAccount = accounts[Msg.sender];
@@ -685,6 +710,7 @@ private:
 
     auto &RecipientAccount = accounts[Msg.recipient];
     ensureAccountHasCodeHash(RecipientAccount);
+    applyPrewarmedStorageKeys(Msg.recipient, RecipientAccount);
 
     intx::uint256 SenderBalance = toUint256Bytes(SenderAccount.balance);
     intx::uint256 RecipientBalance = toUint256Bytes(RecipientAccount.balance);
@@ -711,6 +737,7 @@ private:
     intx::uint256 BaseFee = toUint256BE(tx_context.block_base_fee);
     intx::uint256 PriorityFee =
         GasPrice > BaseFee ? GasPrice - BaseFee : intx::uint256{0};
+    intx::uint256 EffectiveGasPrice = GasPrice;
 
     if (Config.MaxPriorityFeePerGas) {
       intx::uint256 MaxPriority =
@@ -719,21 +746,36 @@ private:
           GasPrice > BaseFee ? GasPrice - BaseFee : intx::uint256{0};
       PriorityFee =
           MaxPriority < MaxFeeMinusBase ? MaxPriority : MaxFeeMinusBase;
+      EffectiveGasPrice = BaseFee + PriorityFee;
     }
 
     intx::uint256 GasCharged256 = intx::uint256(GasCharged);
-    intx::uint256 TotalGasCost = GasCharged256 * GasPrice;
+    intx::uint256 TotalGasCost = GasCharged256 * EffectiveGasPrice;
     intx::uint256 CoinbaseReward = GasCharged256 * PriorityFee;
+    intx::uint256 BlobFee = 0;
+    if (Config.MaxFeePerBlobGas && tx_context.blob_hashes_count > 0) {
+      constexpr uint64_t BlobGasPerBlob = 131072;
+      intx::uint256 BlobBaseFee = toUint256BE(tx_context.blob_base_fee);
+      intx::uint256 MaxFeePerBlobGas =
+          toUint256BE(*Config.MaxFeePerBlobGas);
+      intx::uint256 EffectiveBlobFee =
+          BlobBaseFee <= MaxFeePerBlobGas ? BlobBaseFee : MaxFeePerBlobGas;
+      intx::uint256 BlobGasUsed =
+          intx::uint256(tx_context.blob_hashes_count) *
+          intx::uint256(BlobGasPerBlob);
+      BlobFee = BlobGasUsed * EffectiveBlobFee;
+    }
 
     auto &SenderAccount = accounts[Msg.sender];
     ensureAccountHasCodeHash(SenderAccount);
     intx::uint256 SenderBalance = toUint256Bytes(SenderAccount.balance);
-    if (SenderBalance < TotalGasCost) {
+    const intx::uint256 TotalCost = TotalGasCost + BlobFee;
+    if (SenderBalance < TotalCost) {
       Result.Success = false;
       Result.ErrorMessage = "Sender balance insufficient for gas settlement";
       return;
     }
-    SenderBalance -= TotalGasCost;
+    SenderBalance -= TotalCost;
     SenderAccount.balance = toBytes32(SenderBalance);
 
     if (CoinbaseReward != 0 ||
@@ -750,4 +792,3 @@ private:
 } // namespace zen::evm
 
 #endif // ZEN_TESTS_EVM_TEST_HOST_HPP
-

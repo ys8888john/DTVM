@@ -928,16 +928,6 @@ static uint64_t evmHandleCallInternal(zen::runtime::EVMInstance *Instance,
       .code_size = 0,
   };
 
-  const bool CalleeHasCode =
-      Module->Host->get_code_size(CallMsg.code_address) > 0;
-  bool AddedIntrinsicGas = false;
-  // Compensate for JIT entry charging intrinsic gas only when executing code.
-  if (CalleeHasCode &&
-      CallMsg.gas < static_cast<int64_t>(zen::evm::BASIC_EXECUTION_COST)) {
-    CallMsg.gas += static_cast<int64_t>(zen::evm::BASIC_EXECUTION_COST);
-    AddedIntrinsicGas = true;
-  }
-
   // EIP-150: cap call gas to 63/64 of available gas.
   if (Rev >= EVMC_TANGERINE_WHISTLE) {
     const uint64_t AvailableGas = Instance->getGas();
@@ -959,13 +949,6 @@ static uint64_t evmHandleCallInternal(zen::runtime::EVMInstance *Instance,
       Result.gas_left > 0 ? static_cast<uint64_t>(Result.gas_left) : 0;
   uint64_t GasUsed = CallGas > GasLeft ? CallGas - GasLeft : 0;
   if (GasUsed > 0) {
-    if (CalleeHasCode && (GasLeft > 0 || AddedIntrinsicGas)) {
-      if (GasUsed >= zen::evm::BASIC_EXECUTION_COST) {
-        GasUsed -= zen::evm::BASIC_EXECUTION_COST;
-      } else {
-        GasUsed = 0;
-      }
-    }
     if (GasUsed > 0) {
       Instance->chargeGas(GasUsed);
     }

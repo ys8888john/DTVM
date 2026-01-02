@@ -15,8 +15,8 @@ using namespace zen::evm_test_utils;
 
 namespace {
 
-constexpr bool DEBUG = false;
-constexpr bool PRINT_FAILURE_DETAILS = false;
+constexpr bool DEBUG = true;
+constexpr bool PRINT_FAILURE_DETAILS = true;
 // TODO: RunMode selection logic will be refactored in the future.
 constexpr auto STATE_TEST_RUN_MODE = common::RunMode::MultipassMode;
 
@@ -141,10 +141,9 @@ RuntimeConfig buildRuntimeConfig() {
     }
   }
 
+  Config.EnableEvmGasMetering = true;
 #ifdef ZEN_ENABLE_MULTIPASS_JIT
-  if (Config.Mode == common::RunMode::MultipassMode) {
-    Config.EnableEvmGasMetering = true;
-  }
+  Config.DisableMultipassGreedyRA = true;
 #endif
 
   return Config;
@@ -250,7 +249,12 @@ ExecutionResult executeStateTest(const StateTestFixture &Fixture,
       Entry.Account = PA.Account;
       InitialAccounts.push_back(Entry);
     }
-    HostPtr->loadInitialState(Fixture.Environment, InitialAccounts, true);
+    evmc_tx_context TxContext = Fixture.Environment;
+    if (!PT.BlobHashes.empty()) {
+      TxContext.blob_hashes = PT.BlobHashes.data();
+      TxContext.blob_hashes_count = PT.BlobHashes.size();
+    }
+    HostPtr->loadInitialState(TxContext, InitialAccounts, true);
 
     // Warm sender and recipient (required by EIP-2929)
     HostPtr->access_account(PT.Message->sender);
@@ -294,6 +298,7 @@ ExecutionResult executeStateTest(const StateTestFixture &Fixture,
       ExecConfig.MaxPriorityFeePerGas = parseUint256(
           (*Fixture.Transaction)["maxPriorityFeePerGas"].GetString());
     }
+    ExecConfig.MaxFeePerBlobGas = PT.MaxFeePerBlobGas;
 
     auto ExecResult = MockedHost->executeTransaction(ExecConfig);
 

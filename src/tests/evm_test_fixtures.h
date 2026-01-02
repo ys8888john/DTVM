@@ -24,6 +24,8 @@ struct ParsedTransaction {
   std::unique_ptr<evmc_message> Message;
   std::vector<uint8_t> CallData;
   std::vector<AccessListEntry> AccessList;
+  std::vector<evmc::bytes32> BlobHashes;
+  std::optional<evmc::uint256be> MaxFeePerBlobGas;
   size_t AuthorizationListSize = 0;
 };
 

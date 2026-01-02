@@ -296,7 +296,9 @@ public:
            Opcode == OP_INVALID || Opcode == OP_REVERT);
 
       if (IsBlockStart) {
-        BlockInfos.emplace(CurInfo.EntryPC, CurInfo);
+        if (PC != CurInfo.EntryPC) {
+          BlockInfos.emplace(CurInfo.EntryPC, CurInfo);
+        }
         // Create new block info
         CurInfo = BlockInfo(PC);
         if (Opcode == OP_JUMPDEST) {

@@ -55,9 +55,14 @@ private:
       size_t BytecodeSize = Ctx->getBytecodeSize();
       EVMAnalyzer Analyzer;
       Analyzer.analyze(Bytecode, BytecodeSize);
-      handleBeginBlock(Analyzer);
 
       const uint8_t *Ip = Bytecode;
+      const bool StartsWithJumpDest =
+          BytecodeSize > 0 &&
+          static_cast<evmc_opcode>(Bytecode[0]) == OP_JUMPDEST;
+      if (!StartsWithJumpDest) {
+        handleBeginBlock(Analyzer);
+      }
       const uint8_t *IpEnd = Bytecode + BytecodeSize;
       bool LastStop = false;
 
