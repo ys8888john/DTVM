@@ -140,6 +140,9 @@ add_subdirectory(runtime)
 add_subdirectory(utils)
 if(ZEN_ENABLE_EVM)
   add_subdirectory(evm)
+  if(ZEN_ENABLE_LIBEVM)
+    add_subdirectory(vm)
+  endif()
 endif()
 
 add_library(

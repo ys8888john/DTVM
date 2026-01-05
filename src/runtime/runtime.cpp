@@ -281,6 +281,7 @@ MayBe<EVMModule *> Runtime::loadEVMModule(const std::string &ModName,
 
   EVMSymbol Name = newSymbol(ModName.c_str(), ModName.size());
   if (auto It = EVMModulePool.find(Name); It != EVMModulePool.end()) {
+    freeSymbol(Name);
     return It->second.get();
   }
 

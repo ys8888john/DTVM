@@ -21,6 +21,7 @@ option(ZEN_ENABLE_MULTIPASS_JIT "Enable multipass JIT" OFF)
 option(ZEN_ENABLE_CLI "Enable command line interface" ON)
 option(ZEN_ENABLE_BUILTIN_WASI "Enable builtin wasi" ON)
 option(ZEN_ENABLE_BUILTIN_LIBC "Enable builtin libc (partial)" ON)
+option(ZEN_ENABLE_LIBEVM "Enable evmc library build" OFF)
 
 # Feature options
 option(ZEN_ENABLE_CPU_EXCEPTION "Enable cpu trap to implement wasm trap" ON)
@@ -115,6 +116,10 @@ endif()
 
 if(ZEN_ENABLE_EVM AND ZEN_ENABLE_SINGLEPASS_JIT)
   message(FATAL_ERROR "EVM does not support singlepass JIT mode.")
+endif()
+
+if(ZEN_ENABLE_LIBEVM)
+  set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 endif()
 
 list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/third_party")
