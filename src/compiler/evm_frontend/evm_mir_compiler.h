@@ -248,7 +248,7 @@ public:
         MInstruction *Diff2 = createInstruction<BinaryInstruction>(
             false, OP_sub, MirI64Type, Diff1, Borrow);
 
-        Result[I] = Diff2;
+        Result[I] = protectUnsafeValue(Diff2, MirI64Type);
 
         // (LHS[I] < RHS[I]) || (Diff1 < Borrow)
         if (I < EVM_ELEMENTS_COUNT - 1) {

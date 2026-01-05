@@ -907,7 +907,7 @@ EVMMirBuilder::U256Inst EVMMirBuilder::handleCompareEQZ(const U256Inst &LHS,
       false, Predicate, ResultType, OrResult, Zero);
 
   // Convert to u256: result[0] = CmpResult extended to i64, others = 0
-  Result[0] = CmpResult;
+  Result[0] = protectUnsafeValue(CmpResult, MirI64Type);
   for (size_t I = 1; I < EVM_ELEMENTS_COUNT; ++I) {
     Result[I] = Zero;
   }
@@ -937,7 +937,7 @@ EVMMirBuilder::U256Inst EVMMirBuilder::handleCompareEQ(const U256Inst &LHS,
 
   MType *MirI64Type =
       EVMFrontendContext::getMIRTypeFromEVMType(EVMType::UINT64);
-  Result[0] = AndResult;
+  Result[0] = protectUnsafeValue(AndResult, MirI64Type);
   MInstruction *Zero = createIntConstInstruction(MirI64Type, 0);
   for (size_t I = 1; I < EVM_ELEMENTS_COUNT; ++I) {
     Result[I] = Zero;
@@ -998,7 +998,7 @@ EVMMirBuilder::handleCompareGT_LT(const U256Inst &LHS, const U256Inst &RHS,
   }
 
   ZEN_ASSERT(FinalResult);
-  Result[0] = FinalResult;
+  Result[0] = protectUnsafeValue(FinalResult, MirI64Type);
   for (size_t I = 1; I < EVM_ELEMENTS_COUNT; ++I) {
     Result[I] = Zero;
   }
@@ -1132,10 +1132,11 @@ EVMMirBuilder::handleLeftShift(const U256Inst &Value, MInstruction *ShiftAmount,
 
     // Final result selection based on bounds checking and large shift flag
     // result[I] = IsLargeShift ? 0 : (IsInBounds ? CombinedValue : 0)
-    Result[I] = createInstruction<SelectInstruction>(
+    MInstruction *FinalValue = createInstruction<SelectInstruction>(
         false, MirI64Type, IsLargeShift, Zero,
         createInstruction<SelectInstruction>(false, MirI64Type, IsInBounds,
                                              CombinedValue, Zero));
+    Result[I] = protectUnsafeValue(FinalValue, MirI64Type);
   }
 
   return Result;
@@ -1252,10 +1253,11 @@ EVMMirBuilder::handleLogicalRightShift(const U256Inst &Value,
 
     // Final result selection based on bounds checking and large shift flag
     // result[I] = IsLargeShift ? 0 : (IsInBounds ? CombinedValue : 0)
-    Result[I] = createInstruction<SelectInstruction>(
+    MInstruction *FinalValue = createInstruction<SelectInstruction>(
         false, MirI64Type, IsLargeShift, Zero,
         createInstruction<SelectInstruction>(false, MirI64Type, IsInBounds,
                                              CombinedValue, Zero));
+    Result[I] = protectUnsafeValue(FinalValue, MirI64Type);
   }
 
   return Result;
@@ -1370,10 +1372,11 @@ EVMMirBuilder::handleArithmeticRightShift(const U256Inst &Value,
     MInstruction *CombinedValue = createInstruction<BinaryInstruction>(
         false, OP_or, MirI64Type, ShiftedValue, CarryValue);
 
-    Result[I] = createInstruction<SelectInstruction>(
+    MInstruction *FinalValue = createInstruction<SelectInstruction>(
         false, MirI64Type, IsLargeShift, LargeShiftResult,
         createInstruction<SelectInstruction>(false, MirI64Type, IsInBounds,
                                              CombinedValue, LargeShiftResult));
+    Result[I] = protectUnsafeValue(FinalValue, MirI64Type);
   }
 
   return Result;
@@ -1545,8 +1548,11 @@ EVMMirBuilder::handleSignextend(Operand IndexOp, Operand ValueOp) {
             false, MirI64Type, IsEqual, ExtendedSignComp, ValueComponents[I]));
 
     // If index >= 31, use original value; otherwise use sign-extended value
-    ResultComponents[I] = createInstruction<SelectInstruction>(
-        false, MirI64Type, NoExtension, ValueComponents[I], ComponentResult);
+    ResultComponents[I] =
+        protectUnsafeValue(createInstruction<SelectInstruction>(
+                               false, MirI64Type, NoExtension,
+                               ValueComponents[I], ComponentResult),
+                           MirI64Type);
   }
 
   return Operand(ResultComponents, EVMType::UINT256);
