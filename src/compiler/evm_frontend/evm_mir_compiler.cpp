@@ -1947,6 +1947,11 @@ void EVMMirBuilder::handleInvalid() {
   const auto &RuntimeFunctions = getRuntimeFunctionTable();
   callRuntimeFor(RuntimeFunctions.HandleInvalid);
 }
+
+void EVMMirBuilder::handleUndefined() {
+  const auto &RuntimeFunctions = getRuntimeFunctionTable();
+  callRuntimeFor(RuntimeFunctions.HandleUndefined);
+}
 typename EVMMirBuilder::Operand
 EVMMirBuilder::handleSLoad(Operand KeyComponents) {
   const auto &RuntimeFunctions = getRuntimeFunctionTable();

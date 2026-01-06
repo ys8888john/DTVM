@@ -99,6 +99,7 @@ public:
       case OP_TLOAD:
       case OP_BALANCE:
       case OP_SLOAD:
+      case OP_BLOBHASH:
         PopCount = 1;
         PushCount = 1;
         break;
@@ -273,8 +274,11 @@ public:
       case OP_EXTCODECOPY:
         PopCount = 4;
         break;
+      case OP_JUMPDEST:
+        break;
       default:
-        // For unhandled opcodes, assume no stack change
+        // For unhandled opcodes, treat as invalid
+        Opcode = OP_INVALID;
         break;
       }
 
@@ -291,9 +295,9 @@ public:
       // Check if this is a block starting opcode
       bool IsBlockStart = (Opcode == OP_JUMPDEST || Opcode == OP_JUMPI);
       // Check if this is a block ending opcode
-      bool IsBlockEnd =
-          (Opcode == OP_JUMP || Opcode == OP_RETURN || Opcode == OP_STOP ||
-           Opcode == OP_INVALID || Opcode == OP_REVERT);
+      bool IsBlockEnd = (Opcode == OP_JUMP || Opcode == OP_RETURN ||
+                         Opcode == OP_STOP || Opcode == OP_INVALID ||
+                         Opcode == OP_REVERT || Opcode == OP_SELFDESTRUCT);
 
       if (IsBlockStart) {
         if (PC != CurInfo.EntryPC) {

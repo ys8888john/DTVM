@@ -397,6 +397,7 @@ public:
                            Operand RetOffsetOp, Operand RetSizeOp);
   void handleRevert(Operand OffsetOp, Operand SizeOp);
   void handleInvalid();
+  void handleUndefined();
   void handleTrap(ErrorCode ErrCode);
   Operand handleKeccak256(Operand OffsetComponents, Operand LengthComponents);
   Operand handleSLoad(Operand KeyComponents);

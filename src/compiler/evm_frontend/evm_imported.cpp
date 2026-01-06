@@ -111,6 +111,7 @@ const RuntimeFunctions &getRuntimeFunctionTable() {
       .HandleStaticCall = &evmHandleStaticCall,
       .SetRevert = &evmSetRevert,
       .HandleInvalid = &evmHandleInvalid,
+      .HandleUndefined = &evmHandleUndefined,
       .HandleSelfDestruct = &evmHandleSelfDestruct,
       .GetKeccak256 = &evmGetKeccak256};
   return Table;
@@ -997,12 +998,21 @@ uint64_t evmHandleCallCode(zen::runtime::EVMInstance *Instance, uint64_t Gas,
 }
 
 void evmHandleInvalid(zen::runtime::EVMInstance *Instance) {
-  // Immediately terminate the execution and return the revert code (2)
+  // Immediately terminate the execution and return the invalid code (4)
   evmc::Result ExeResult(
       EVMC_INVALID_INSTRUCTION, 0, Instance ? Instance->getGasRefund() : 0,
       Instance->getReturnData().data(), Instance->getReturnData().size());
   Instance->setExeResult(std::move(ExeResult));
   Instance->exit(4);
+}
+
+void evmHandleUndefined(zen::runtime::EVMInstance *Instance) {
+  // Immediately terminate the execution and return the undefined code
+  evmc::Result ExeResult(
+      EVMC_UNDEFINED_INSTRUCTION, 0, Instance ? Instance->getGasRefund() : 0,
+      Instance->getReturnData().data(), Instance->getReturnData().size());
+  Instance->setExeResult(std::move(ExeResult));
+  Instance->exit(5);
 }
 
 uint64_t evmHandleDelegateCall(zen::runtime::EVMInstance *Instance,
