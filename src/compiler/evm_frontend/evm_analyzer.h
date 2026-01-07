@@ -21,6 +21,7 @@ public:
     uint64_t EntryPC = 0;
     int32_t MaxStackHeight = 0;
     int32_t MinStackHeight = 0;
+    int32_t MinPopHeight = 0;
     int32_t StackHeightDiff = 0;
     bool IsJumpDest = false;
 
@@ -286,6 +287,11 @@ public:
       CurInfo.StackHeightDiff -= PopCount;
       if (CurInfo.StackHeightDiff < CurInfo.MinStackHeight) {
         CurInfo.MinStackHeight = CurInfo.StackHeightDiff;
+      }
+      if (!(Opcode >= OP_SWAP1 && Opcode <= OP_SWAP16) &&
+          !(Opcode >= OP_DUP1 && Opcode <= OP_DUP16)) {
+        CurInfo.MinPopHeight =
+            std::min(CurInfo.StackHeightDiff, CurInfo.MinPopHeight);
       }
       CurInfo.StackHeightDiff += PushCount;
       if (CurInfo.StackHeightDiff > CurInfo.MaxStackHeight) {

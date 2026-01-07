@@ -655,6 +655,16 @@ private:
     }
     Builder.createStackCheckBlock(-BlockInfo.MinStackHeight,
                                   1024 - BlockInfo.MaxStackHeight);
+    int32_t TotalPopSize = -BlockInfo.MinPopHeight;
+    EvalStack ReverseStack;
+    while (TotalPopSize > 0) {
+      ReverseStack.push(Builder.stackPop());
+      TotalPopSize--;
+    }
+    while (!ReverseStack.empty()) {
+      Operand Opnd = ReverseStack.pop();
+      Stack.push(Opnd);
+    }
   }
 
   void handleEndBlock() {
