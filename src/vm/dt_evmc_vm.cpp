@@ -1,3 +1,5 @@
+// Copyright (C) 2025 the DTVM authors. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
 
 #include "dt_evmc_vm.h"
 #include "common/enums.h"
@@ -7,14 +9,11 @@
 #include "runtime/isolation.h"
 #include "runtime/runtime.h"
 #include "wrapped_host.h"
+
 #include <evmc/evmc.h>
 #include <evmc/evmc.hpp>
 #include <evmc/helpers.h>
-#include <evmc/instructions.h>
 
-#include <algorithm>
-#include <cstdio>
-#include <cstdlib>
 #include <cstring>
 
 namespace {
@@ -108,7 +107,20 @@ evmc_result execute(evmc_vm *EVMInstance, const evmc_host_interface *Host,
                     const evmc_message *Msg, const uint8_t *Code,
                     size_t CodeSize) {
   auto *VM = static_cast<DTVM *>(EVMInstance);
-  VM->ExecHost->reinitialize(Host, Context);
+  struct HostContextScope {
+    WrappedHost *ExecHost;
+    const evmc_host_interface *PrevInterface;
+    evmc_host_context *PrevContext;
+    HostContextScope(WrappedHost *Host, const evmc_host_interface *Interface,
+                     evmc_host_context *Context)
+        : ExecHost(Host), PrevInterface(Host->getInterface()),
+          PrevContext(Host->getContext()) {
+      ExecHost->reinitialize(Interface, Context);
+    }
+    ~HostContextScope() { ExecHost->reinitialize(PrevInterface, PrevContext); }
+  };
+
+  HostContextScope HostScope(VM->ExecHost.get(), Host, Context);
 
   if (!VM->RT) {
     VM->RT = Runtime::newEVMRuntime(VM->Config, VM->ExecHost.get());
@@ -137,7 +149,7 @@ evmc_result execute(evmc_vm *EVMInstance, const evmc_host_interface *Host,
     return evmc_make_result(EVMC_FAILURE, 0, 0, nullptr, 0);
   }
 
-  auto TheInst = *InstRet;
+  auto *TheInst = *InstRet;
   evmc_message Message = *Msg;
   evmc::Result Result;
   VM->RT->callEVMMain(*TheInst, Message, Result);

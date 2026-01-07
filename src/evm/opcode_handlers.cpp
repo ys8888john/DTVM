@@ -3,6 +3,7 @@
 
 #include "evm/opcode_handlers.h"
 #include "common/errors.h"
+#include "evm/gas_storage_cost.h"
 #include "evm/interpreter.h"
 #include "evmc/evmc.h"
 #include "evmc/instructions.h"
@@ -242,9 +243,11 @@ bool checkMemoryExpandAndChargeGas(EVMFrame *Frame, const intx::uint256 &Offset,
   if (Offset > std::numeric_limits<uint64_t>::max()) {
     return false;
   }
-  EVM_REQUIRE(static_cast<uint64_t>(Offset) < UINT64_MAX - Size,
-              IntegerOverflow);
-  const auto NewSize = static_cast<uint64_t>(Offset) + Size;
+  const uint64_t Offset64 = static_cast<uint64_t>(Offset);
+  if (Offset64 > std::numeric_limits<uint64_t>::max() - Size) {
+    return false;
+  }
+  const auto NewSize = Offset64 + Size;
   return expandMemoryAndChargeGas(Frame, NewSize);
 }
 bool checkMemoryExpandAndChargeGas(EVMFrame *Frame, const intx::uint256 &Offset,
@@ -1347,11 +1350,6 @@ void CallHandler::doExecute() {
     return;
   }
 
-  if (TransfersValue && !HasEnoughBalance) {
-    Context->setStatus(EVMC_SUCCESS); // "Light" failure
-    return;
-  }
-
   if (!expandMemoryAndChargeGas(Frame,
                                 uint256ToUint64(InputOffset + InputSize)) or
       !expandMemoryAndChargeGas(Frame,
@@ -1391,6 +1389,11 @@ void CallHandler::doExecute() {
 
   if (TransfersValue) {
     NewMsg.gas += CALL_GAS_STIPEND;
+    if (!HasEnoughBalance) {
+      Context->setStatus(EVMC_SUCCESS); // "Light" failure
+      return;
+    }
+    Frame->Msg.gas += CALL_GAS_STIPEND;
   }
 
   const auto Result = Frame->Host->call(NewMsg);
@@ -1475,20 +1478,28 @@ void SelfDestructHandler::doExecute() {
   intx::uint256 BeneficiaryAddr = Frame->pop();
   const auto Beneficiary = intx::be::trunc<evmc::address>(BeneficiaryAddr);
 
-  // EIP-161: if target account does not exist, charge account creation cost
+  // EIP-161: charge account creation cost only if a new account is created.
   const auto Rev = currentRevision();
   if (Rev >= EVMC_SPURIOUS_DRAGON &&
       !Frame->Host->account_exists(Beneficiary)) {
-    if (!chargeGas(Frame, ACCOUNT_CREATION_COST)) {
-      Context->setStatus(EVMC_OUT_OF_GAS);
-      return;
+    const auto Balance = Frame->Host->get_balance(Frame->Msg.recipient);
+    if (intx::be::load<intx::uint256>(Balance) != 0) {
+      if (!chargeGas(Frame, ACCOUNT_CREATION_COST)) {
+        Context->setStatus(EVMC_OUT_OF_GAS);
+        return;
+      }
     }
   }
 
-  // EIP-2929: Charge cold account access cost if needed
-  if (Rev >= EVMC_BERLIN &&
-      Frame->Host->access_account(Beneficiary) == EVMC_ACCESS_COLD) {
-    if (!chargeGas(Frame, ADDITIONAL_COLD_ACCOUNT_ACCESS_COST)) {
+  // EIP-2929: charge warm access cost, plus additional cold cost if needed.
+  if (Rev >= EVMC_BERLIN) {
+    const bool IsCold =
+        Frame->Host->access_account(Beneficiary) == EVMC_ACCESS_COLD;
+    if (!chargeGas(Frame, WARM_ACCOUNT_ACCESS_COST)) {
+      Context->setStatus(EVMC_OUT_OF_GAS);
+      return;
+    }
+    if (IsCold && !chargeGas(Frame, ADDITIONAL_COLD_ACCOUNT_ACCESS_COST)) {
       Context->setStatus(EVMC_OUT_OF_GAS);
       return;
     }

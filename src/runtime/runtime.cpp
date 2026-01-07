@@ -275,7 +275,7 @@ Runtime::loadEVMModule(const std::string &Filename) noexcept {
 MayBe<EVMModule *> Runtime::loadEVMModule(const std::string &ModName,
                                           const void *Data,
                                           size_t Size) noexcept {
-  if (ModName.empty() || !Data || !Size) {
+  if (ModName.empty() || (Size != 0 && Data == nullptr)) {
     return getError(ErrorCode::InvalidRawData);
   }
 
@@ -827,6 +827,8 @@ void Runtime::callEVMInJITMode(EVMInstance &Inst, evmc_message &Msg,
       return EVMC_INVALID_MEMORY_ACCESS;
     case ErrorCode::EVMInvalidInstruction:
       return EVMC_INVALID_INSTRUCTION;
+    case ErrorCode::EVMStaticModeViolation:
+      return EVMC_STATIC_MODE_VIOLATION;
     default:
       return EVMC_FAILURE;
     }
@@ -854,6 +856,11 @@ void Runtime::callEVMInJITMode(EVMInstance &Inst, evmc_message &Msg,
         Inst.clearError();
       } else if (InstErr != ErrorCode::NoError) {
         Result.status_code = MapErrToStatus(InstErr);
+      }
+      if (Result.status_code == EVMC_SUCCESS ||
+          Result.status_code == EVMC_REVERT) {
+        Result.gas_left = static_cast<int64_t>(Inst.getGas());
+        Result.gas_refund = static_cast<int64_t>(Inst.getGasRefund());
       }
 
 #ifdef ZEN_ENABLE_CPU_EXCEPTION
