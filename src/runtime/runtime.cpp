@@ -692,6 +692,7 @@ void Runtime::callEVMMain(EVMInstance &Inst, evmc_message &Msg,
     ZEN_UNREACHABLE();
 #endif
   }
+  Result.gas_left = Inst.getGas();
 #ifdef ZEN_ENABLE_LINUX_PERF
   Stats.stopRecord(Timer);
 #endif
