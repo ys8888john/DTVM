@@ -51,6 +51,7 @@ inline uint64_t calculateWordCopyGas(uint64_t Size) {
 }
 
 inline void triggerStaticModeViolation(zen::runtime::EVMInstance *Instance) {
+  Instance->setGas(0);
   zen::runtime::EVMInstance::triggerInstanceExceptionOnJIT(
       Instance, zen::common::ErrorCode::EVMStaticModeViolation);
 }
@@ -719,6 +720,10 @@ static void evmEmitLogGeneric(zen::runtime::EVMInstance *Instance,
 
   const evmc_message *Msg = Instance->getCurrentMessage();
   ZEN_ASSERT(Msg && "No current message set in EVMInstance");
+  if (Instance->isStaticMode()) {
+    triggerStaticModeViolation(Instance);
+    return;
+  }
 
   // Only expand memory if we actually need to access it (Size > 0)
   const uint8_t *Data = nullptr;
@@ -790,6 +795,10 @@ const uint8_t *evmHandleCreateInternal(zen::runtime::EVMInstance *Instance,
   ZEN_ASSERT(Msg && "No current message set in EVMInstance");
 
   static thread_local uint8_t ZeroAddress[32] = {0};
+  if (Instance->isStaticMode()) {
+    triggerStaticModeViolation(Instance);
+    return ZeroAddress;
+  }
 
   evmc_revision Rev = Instance->getRevision();
   if (Rev >= EVMC_SHANGHAI && Size > zen::evm::MAX_SIZE_OF_INITCODE) {
@@ -1080,6 +1089,7 @@ void evmHandleInvalid(zen::runtime::EVMInstance *Instance) {
   evmc::Result ExeResult(
       EVMC_INVALID_INSTRUCTION, 0, Instance ? Instance->getGasRefund() : 0,
       Instance->getReturnData().data(), Instance->getReturnData().size());
+  Instance->setGas(0);
   Instance->setExeResult(std::move(ExeResult));
   Instance->exit(4);
 }
@@ -1089,6 +1099,7 @@ void evmHandleUndefined(zen::runtime::EVMInstance *Instance) {
   evmc::Result ExeResult(
       EVMC_UNDEFINED_INSTRUCTION, 0, Instance ? Instance->getGasRefund() : 0,
       Instance->getReturnData().data(), Instance->getReturnData().size());
+  Instance->setGas(0);
   Instance->setExeResult(std::move(ExeResult));
   Instance->exit(5);
 }
