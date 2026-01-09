@@ -7,6 +7,7 @@
 #include "compiler/mir/module.h"
 #include "runtime/evm_instance.h"
 #include "utils/hash_utils.h"
+#include <unordered_set>
 
 namespace COMPILER {
 
@@ -225,6 +226,26 @@ void EVMMirBuilder::finalizeEVMBase() {
       std::find(CurFunc->begin(), CurFunc->end(), ReturnBB) == CurFunc->end()) {
     CurFunc->deleteMBasicBlock(ReturnBB);
     ReturnBB = nullptr;
+  }
+  if (!HasIndirectJump) {
+    // When there are no indirect jumps, we can safely remove unused dest
+    // Create a hashset to track usage of JumpDest basic blocks
+    std::unordered_set<MBasicBlock *> JumpDestUnused;
+    JumpDestUnused.reserve(JumpDestTable.size());
+    for (const auto &[pc, bb] : JumpDestTable) {
+      JumpDestUnused.insert(bb);
+    }
+    // Check if JumpDest BBs are used
+    for (auto It = CurFunc->begin(); It != CurFunc->end(); ++It) {
+      auto UsageIt = JumpDestUnused.find(*It);
+      if (UsageIt != JumpDestUnused.end()) {
+        JumpDestUnused.erase(UsageIt);
+      }
+    }
+    // Delete all unused JumpDest basic blocks
+    for (auto *BB : JumpDestUnused) {
+      CurFunc->deleteMBasicBlock(BB);
+    }
   }
 }
 
@@ -773,6 +794,7 @@ void EVMMirBuilder::implementIndirectJump(MInstruction *JumpTarget,
     addUniqueSuccessor(FailureBB);
     return;
   }
+  HasIndirectJump = true;
 
 #ifdef ZEN_ENABLE_LINUX_PERF
   CurBB->setSourceOffset(CurPC);

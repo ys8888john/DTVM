@@ -610,6 +610,7 @@ private:
   const evmc_instruction_metrics *InstructionMetrics = nullptr;
 
   // Jump table for dynamic jumps
+  bool HasIndirectJump = false;
   std::map<uint64_t, MBasicBlock *> JumpDestTable;
   MBasicBlock *DefaultJumpBB = nullptr; // For invalid jump destinations
 
