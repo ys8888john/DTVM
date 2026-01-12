@@ -573,8 +573,8 @@ private:
           InDeadCode = false;
           handleEndBlock();
           Builder.handleJumpDest(PC);
-          handleBeginBlock(Analyzer);
           Builder.meterOpcode(Opcode, PC);
+          handleBeginBlock(Analyzer);
           break;
         }
 
@@ -629,18 +629,7 @@ private:
         handleStop();
       }
     } catch (const common::Error &E) {
-      switch (E.getCode()) {
-      case common::ErrorCode::EVMStackOverflow:
-        Builder.handleTrap(common::ErrorCode::EVMStackOverflow);
-        InDeadCode = true;
-        return true;
-      case common::ErrorCode::EVMStackUnderflow:
-        Builder.handleTrap(common::ErrorCode::EVMStackUnderflow);
-        InDeadCode = true;
-        return true;
-      default:
-        break;
-      }
+      ZEN_UNREACHABLE();
       return false;
     }
     return true;
@@ -650,8 +639,15 @@ private:
     const auto &BlockInfos = Analyzer.getBlockInfos();
     ZEN_ASSERT(BlockInfos.count(PC) > 0 && "Block info not found");
     const auto &BlockInfo = BlockInfos.at(PC);
-    if (BlockInfo.MaxStackHeight > EVM_MAX_STACK_SIZE) {
-      throw getError(common::ErrorCode::EVMStackOverflow);
+    if (static_cast<size_t>(-BlockInfo.MinStackHeight) > EVM_MAX_STACK_SIZE) {
+      Builder.handleTrap(common::ErrorCode::EVMStackUnderflow);
+      InDeadCode = true;
+      return;
+    }
+    if (static_cast<size_t>(BlockInfo.MaxStackHeight) > EVM_MAX_STACK_SIZE) {
+      Builder.handleTrap(common::ErrorCode::EVMStackOverflow);
+      InDeadCode = true;
+      return;
     }
     Builder.createStackCheckBlock(-BlockInfo.MinStackHeight,
                                   1024 - BlockInfo.MaxStackHeight);
@@ -893,7 +889,7 @@ private:
       handleLogImpl<4>();
       break;
     default:
-      throw getError(ErrorCode::UnsupportedOpcode);
+      ZEN_UNREACHABLE();
     }
   }
 
