@@ -150,6 +150,14 @@ public:
     return Variables[VarIdx - getNumParams()]->getType();
   }
 
+  Variable *getVariable(uint32_t VarIdx) {
+    ZEN_ASSERT(VarIdx < getNumVariables());
+    if (VarIdx < getNumParams()) {
+      return nullptr;
+    }
+    return Variables[VarIdx - getNumParams()];
+  }
+
   uint32_t getNumInstructions() const { return Instructions.size(); }
 
   template <class T, typename... Arguments>
@@ -223,6 +231,18 @@ private:
   CompileMap<ErrorCode, MBasicBlock *> ExceptionSetBBs;
   MBasicBlock *ExceptionHandlingBB = nullptr;
   MBasicBlock *ExceptionReturnBB = nullptr;
+#ifdef ZEN_ENABLE_EVM_GAS_REGISTER
+  VariableIdx GasRegisterVarIdx = VariableIdx(-1);
+#endif
+
+public:
+#ifdef ZEN_ENABLE_EVM_GAS_REGISTER
+  // Set the gas register variable index (used by EVM JIT)
+  void setGasRegisterVarIdx(VariableIdx VarIdx) { GasRegisterVarIdx = VarIdx; }
+
+  // Get the gas register variable index (-1 if not set)
+  VariableIdx getGasRegisterVarIdx() const { return GasRegisterVarIdx; }
+#endif
 };
 
 } // namespace COMPILER

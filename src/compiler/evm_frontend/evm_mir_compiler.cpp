@@ -9,6 +9,10 @@
 #include "utils/hash_utils.h"
 #include <unordered_set>
 
+#ifdef ZEN_ENABLE_EVM_GAS_REGISTER
+#include "compiler/llvm-prebuild/Target/X86/X86Subtarget.h"
+#endif
+
 namespace COMPILER {
 
 // Hash table constants
@@ -390,7 +394,7 @@ void EVMMirBuilder::initGasRegister() {
   MPointerType *I64PtrType = MPointerType::create(Ctx, Ctx.I64Type);
   MPointerType *VoidPtrType = createVoidPtrType();
 
-  // Load gas from message->gas (same source as memory-based path)
+  // Load gas from message->gas
   MInstruction *MsgPtr = getInstanceElement(
       VoidPtrType, zen::runtime::EVMInstance::getCurrentMessagePointerOffset());
   MInstruction *MsgPtrInt = createInstruction<ConversionInstruction>(
@@ -404,8 +408,12 @@ void EVMMirBuilder::initGasRegister() {
   MInstruction *GasValue =
       createInstruction<LoadInstruction>(false, I64Type, MsgGasPtr);
 
-  // Store in variable that will be allocated to R14
+  // Create GasRegVar - will be allocated to virtual register
+  // Explicit COPY instructions will be added during lowering
   GasRegVar = storeInstructionInTemp(GasValue, I64Type);
+
+  // Store the VarIdx so lowering can identify this variable
+  CurFunc->setGasRegisterVarIdx(GasRegVar->getVarIdx());
 }
 
 void EVMMirBuilder::syncGasToMemory() {
