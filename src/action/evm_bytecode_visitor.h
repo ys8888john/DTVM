@@ -64,7 +64,6 @@ private:
         handleBeginBlock(Analyzer);
       }
       const uint8_t *IpEnd = Bytecode + BytecodeSize;
-      bool LastStop = false;
 
       while (Ip < IpEnd) {
         evmc_opcode Opcode = static_cast<evmc_opcode>(*Ip);
@@ -83,8 +82,6 @@ private:
           continue;
         }
         bool IsJumpDest = (Opcode == OP_JUMPDEST);
-        LastStop = (Opcode == OP_STOP);
-
         if (!IsJumpDest) {
           Builder.meterOpcode(Opcode, PC);
         }
@@ -93,7 +90,6 @@ private:
         case OP_STOP:
           handleEndBlock();
           handleStop();
-          InDeadCode = true;
           break;
         case OP_ADD:
           handleBinaryArithmetic<BinaryOperator::BO_ADD>();
@@ -547,7 +543,6 @@ private:
           Operand Beneficiary = pop();
           handleEndBlock();
           Builder.handleSelfDestruct(Beneficiary);
-          InDeadCode = true;
           break;
         }
 
@@ -556,7 +551,6 @@ private:
           Operand Dest = pop();
           handleEndBlock();
           Builder.handleJump(Dest);
-          InDeadCode = true;
           break;
         }
 
@@ -570,7 +564,6 @@ private:
         }
 
         case OP_JUMPDEST: {
-          InDeadCode = false;
           handleEndBlock();
           Builder.handleJumpDest(PC);
           Builder.meterOpcode(Opcode, PC);
@@ -597,7 +590,6 @@ private:
           Operand Length = pop();
           handleEndBlock();
           Builder.handleReturn(MemOffset, Length);
-          InDeadCode = true;
           break;
         }
 
@@ -606,14 +598,12 @@ private:
           Operand SizeOp = pop();
           handleEndBlock();
           Builder.handleRevert(OffsetOp, SizeOp);
-          InDeadCode = true;
           break;
         }
 
         case OP_INVALID: {
           handleEndBlock();
           Builder.handleInvalid();
-          InDeadCode = true;
           break;
         }
 
@@ -621,11 +611,10 @@ private:
           // Treat as undefined
           handleEndBlock();
           Builder.handleUndefined();
-          InDeadCode = true;
         }
         PC++; // offset 1 byte for opcode
       }
-      if (!LastStop) {
+      if (!InDeadCode) {
         handleStop();
       }
     } catch (const common::Error &E) {
@@ -649,6 +638,7 @@ private:
       InDeadCode = true;
       return;
     }
+    InDeadCode = false;
     Builder.createStackCheckBlock(-BlockInfo.MinStackHeight,
                                   1024 - BlockInfo.MaxStackHeight);
     int32_t TotalPopSize = -BlockInfo.MinPopHeight;
@@ -674,6 +664,7 @@ private:
       Operand Opnd = ReverseStack.pop();
       Builder.stackPush(Opnd);
     }
+    InDeadCode = true;
   }
 
   void handleStop() { Builder.handleStop(); }
