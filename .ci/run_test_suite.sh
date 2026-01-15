@@ -71,6 +71,9 @@ case $TestSuite in
     "evmrealsuite")
         CMAKE_OPTIONS="$CMAKE_OPTIONS -DZEN_ENABLE_SPEC_TEST=ON -DZEN_ENABLE_ASSEMBLYSCRIPT_TEST=ON -DZEN_ENABLE_CHECKED_ARITHMETIC=ON -DZEN_ENABLE_EVM=ON"
         ;;
+    "evmonetestsuite")
+        CMAKE_OPTIONS="$CMAKE_OPTIONS -DZEN_ENABLE_EVM=ON -DZEN_ENABLE_LIBEVM=ON"
+        ;;
 esac
 
 case $CPU_EXCEPTION_TYPE in
@@ -85,6 +88,10 @@ esac
 STACK_TYPES=("-DZEN_ENABLE_VIRTUAL_STACK=ON" "-DZEN_ENABLE_VIRTUAL_STACK=OFF")
 if [[ $RUN_MODE == "interpreter" ]]; then
     STACK_TYPES=("-DZEN_ENABLE_VIRTUAL_STACK=OFF")
+fi
+
+if [[ $TestSuite == "evmonetestsuite" ]]; then
+    STACK_TYPES=("-DZEN_ENABLE_VIRTUAL_STACK=ON")
 fi
 
 export PATH=$PATH:$PWD/build
@@ -137,6 +144,13 @@ for STACK_TYPE in ${STACK_TYPES[@]}; do
             ;;
         "evmrealsuite")
             python3 tools/run_evm_tests.py -r build/dtvm $EXTRA_EXE_OPTIONS
+            ;;
+        "evmonetestsuite")
+            git clone --depth 1 --recurse-submodules -b for_test https://github.com/DTVMStack/evmone.git
+            mv build/lib/* evmone
+            cd evmone
+            git status
+            ./run_unittests.sh
             ;;
     esac
 done
