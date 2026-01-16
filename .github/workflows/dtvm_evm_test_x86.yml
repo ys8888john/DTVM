@@ -163,7 +163,7 @@ jobs:
           export LLVM_DIR=$LLVM_SYS_150_PREFIX/lib/cmake/llvm
           export PATH=$LLVM_SYS_150_PREFIX/bin:$PATH
           export CMAKE_BUILD_TARGET=Release
-          export ENABLE_ASAN=false
+          export ENABLE_ASAN=true
           export RUN_MODE=multipass
           export CPU_EXCEPTION_TYPE='cpu'
           export TestSuite=evmonetestsuite

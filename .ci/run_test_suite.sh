@@ -148,6 +148,7 @@ for STACK_TYPE in ${STACK_TYPES[@]}; do
         "evmonetestsuite")
             git clone --depth 1 --recurse-submodules -b for_test https://github.com/DTVMStack/evmone.git
             mv build/lib/* evmone
+            mv EVMOneUnitTestsRunList.txt evmone
             cd evmone
             git status
             ./run_unittests.sh

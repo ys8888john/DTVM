@@ -920,6 +920,10 @@ static uint64_t evmHandleCallInternal(zen::runtime::EVMInstance *Instance,
   if (Rev >= EVMC_BERLIN &&
       Module->Host->access_account(TargetAddr) == EVMC_ACCESS_COLD) {
     Instance->chargeGas(zen::evm::ADDITIONAL_COLD_ACCOUNT_ACCESS_COST);
+  } else if (Rev >= EVMC_TANGERINE_WHISTLE && Rev <= EVMC_ISTANBUL) {
+    if (CallKind == EVMC_DELEGATECALL) {
+      Instance->chargeGas(zen::evm::DELEGATECALL_EXTRA_GAS_TW_TO_ISTANBUL);
+    }
   }
 
   const bool TransfersValue =
@@ -1050,11 +1054,6 @@ static uint64_t evmHandleCallInternal(zen::runtime::EVMInstance *Instance,
     size_t CopySize =
         std::min(static_cast<size_t>(RetSize), Result.output_size);
     std::memcpy(Memory.data() + RetOffset, Result.output_data, CopySize);
-
-    // Zero out remaining output area if needed
-    if (RetSize > CopySize) {
-      std::memset(Memory.data() + RetOffset + CopySize, 0, RetSize - CopySize);
-    }
   }
 
   // Store full return data for RETURNDATASIZE/RETURNDATACOPY
