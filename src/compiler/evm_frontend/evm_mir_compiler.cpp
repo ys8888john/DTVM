@@ -230,26 +230,6 @@ void EVMMirBuilder::finalizeEVMBase() {
     CurFunc->deleteMBasicBlock(ReturnBB);
     ReturnBB = nullptr;
   }
-  if (!HasIndirectJump) {
-    // When there are no indirect jumps, we can safely remove unused dest
-    // Create a hashset to track usage of JumpDest basic blocks
-    std::unordered_set<MBasicBlock *> JumpDestUnused;
-    JumpDestUnused.reserve(JumpDestTable.size());
-    for (const auto &[pc, bb] : JumpDestTable) {
-      JumpDestUnused.insert(bb);
-    }
-    // Check if JumpDest BBs are used
-    for (auto It = CurFunc->begin(); It != CurFunc->end(); ++It) {
-      auto UsageIt = JumpDestUnused.find(*It);
-      if (UsageIt != JumpDestUnused.end()) {
-        JumpDestUnused.erase(UsageIt);
-      }
-    }
-    // Delete all unused JumpDest basic blocks
-    for (auto *BB : JumpDestUnused) {
-      CurFunc->deleteMBasicBlock(BB);
-    }
-  }
 }
 
 LoadInstruction *EVMMirBuilder::getInstanceElement(MType *ValueType,
@@ -1003,7 +983,15 @@ void EVMMirBuilder::handleJumpI(Operand Dest, Operand Cond) {
 
 void EVMMirBuilder::handleJumpDest(const uint64_t &PC) {
   MBasicBlock *DestBB = JumpDestTable.at(PC);
-  if (CurBB != DestBB) {
+  // Only add successor if the current BB is not ExceptionSetBB,
+  bool IsExceptionSetBB = false;
+  for (auto &[EC, BB] : CurFunc->getExceptionSetBBs()) {
+    if (CurBB == BB) {
+      IsExceptionSetBB = true;
+      break;
+    }
+  }
+  if (CurBB != DestBB && !IsExceptionSetBB) {
     if (CurBB->empty()) {
       CurBB->addSuccessor(DestBB);
       createInstruction<BrInstruction>(true, Ctx, DestBB);
@@ -2320,14 +2308,19 @@ void EVMMirBuilder::handleInvalid() {
     setInsertBlock(ReturnBB);
     handleVoidReturn();
   }
-
-  MBasicBlock *PostInvalidBB = createBasicBlock();
-  setInsertBlock(PostInvalidBB);
 }
 
 void EVMMirBuilder::handleUndefined() {
   const auto &RuntimeFunctions = getRuntimeFunctionTable();
   callRuntimeFor(RuntimeFunctions.HandleUndefined);
+
+  createInstruction<BrInstruction>(true, Ctx, ReturnBB);
+  addSuccessor(ReturnBB);
+
+  if (ReturnBB->empty()) {
+    setInsertBlock(ReturnBB);
+    handleVoidReturn();
+  }
 }
 typename EVMMirBuilder::Operand
 EVMMirBuilder::handleSLoad(Operand KeyComponents) {
