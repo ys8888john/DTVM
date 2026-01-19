@@ -91,6 +91,8 @@ multi_vm/evm.eip2929_sload_cold/external_vm
 multi_vm/evm.eip2929_sload_two_slots/external_vm
 multi_vm/evm.eip2929_sload_warm/external_vm
 multi_vm/evm.eip2929_delegatecall_cold/external_vm
+multi_vm/evm.evmone_block_gas_cost_overflow_create/external_vm
+multi_vm/evm.evmone_block_stack_req_overflow/external_vm
 multi_vm/evm.basefee_nominal_case/external_vm
 multi_vm/evm.push0/external_vm
 multi_vm/evm.push0_return_empty/external_vm

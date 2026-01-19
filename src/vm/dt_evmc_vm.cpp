@@ -21,6 +21,24 @@ namespace {
 using namespace zen::runtime;
 using namespace zen::common;
 
+// JIT compilation limits (95% < 10KB)
+const size_t MAX_JIT_BYTECODE_SIZE = 0x6000;
+
+// RAII helper for temporarily changing runtime configuration
+class ScopedConfig {
+public:
+  ScopedConfig(Runtime *Runtime, const RuntimeConfig &NewConfig)
+      : RT(Runtime), PreviousConfig(Runtime->getConfig()) {
+    RT->setConfig(NewConfig);
+  }
+
+  ~ScopedConfig() { RT->setConfig(PreviousConfig); }
+
+private:
+  Runtime *RT;
+  RuntimeConfig PreviousConfig;
+};
+
 // CRC32 checksum
 uint32_t crc32(const uint8_t *Data, size_t Size) {
   static uint32_t Table[256];
@@ -125,6 +143,14 @@ evmc_result execute(evmc_vm *EVMInstance, const evmc_host_interface *Host,
 
   if (!VM->RT) {
     VM->RT = Runtime::newEVMRuntime(VM->Config, VM->ExecHost.get());
+  }
+  // Use interpreter mode for large bytecode
+  std::unique_ptr<ScopedConfig> TempConfig;
+  if (VM->Config.Mode == RunMode::MultipassMode &&
+      CodeSize > MAX_JIT_BYTECODE_SIZE) {
+    RuntimeConfig NewConfig = VM->Config;
+    NewConfig.Mode = RunMode::InterpMode;
+    TempConfig = std::make_unique<ScopedConfig>(VM->RT.get(), NewConfig);
   }
 
   uint32_t CheckSum = crc32(Code, CodeSize);

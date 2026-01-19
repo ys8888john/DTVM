@@ -309,6 +309,8 @@ public:
 
   const RuntimeConfig &getConfig() const { return Config; }
 
+  void setConfig(const RuntimeConfig &NewConfig) { Config = NewConfig; }
+
   utils::Statistics &getStatistics() { return Stats; }
 
   void startCPUTracing();
