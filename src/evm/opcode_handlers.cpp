@@ -1071,6 +1071,7 @@ void RevertHandler::doExecute() {
 
   Context->setStatus(EVMC_REVERT);
   Context->setReturnData(std::move(RevertData));
+  Context->getInstance()->setGasRefund(Frame->GasRefundSnapshot);
   // Return remaining gas to parent frame before freeing current frame
   uint64_t RemainingGas = Frame->Msg.gas;
   Context->freeBackFrame();
@@ -1231,8 +1232,16 @@ void CreateHandler::doExecute() {
 
   evmc::Result Result = Frame->Host->call(NewMsg);
   Context->setResource();
-  chargeGas(Frame,
-            NewMsg.gas - Result.gas_left); // it's safe to charge gas here
+  const uint64_t CallGas =
+      NewMsg.gas > 0 ? static_cast<uint64_t>(NewMsg.gas) : 0;
+  uint64_t GasLeft =
+      Result.gas_left > 0 ? static_cast<uint64_t>(Result.gas_left) : 0;
+  if (Result.status_code != EVMC_SUCCESS && Result.status_code != EVMC_REVERT) {
+    GasLeft = 0;
+  }
+  if (CallGas > GasLeft) {
+    chargeGas(Frame, CallGas - GasLeft); // it's safe to charge gas here
+  }
   Context->getInstance()->addGasRefund(Result.gas_refund);
 
   Context->setReturnData(std::vector<uint8_t>(
@@ -1241,7 +1250,7 @@ void CreateHandler::doExecute() {
     Frame->pop(); // pop the assume value
     Frame->push(intx::be::load<intx::uint256>(Result.create_address));
   }
-  Context->setStatus(Result.status_code);
+  Context->setStatus(EVMC_SUCCESS);
 }
 
 void CallHandler::doExecute() {
@@ -1340,6 +1349,7 @@ void CallHandler::doExecute() {
     if (OpCode == OP_CALL && TransfersValue && HasEnoughBalance &&
         !Frame->Host->account_exists(Dest)) {
       Cost += ACCOUNT_CREATION_COST;
+      Cost -= CALL_GAS_STIPEND;
     }
   }
 
@@ -1393,7 +1403,6 @@ void CallHandler::doExecute() {
       Context->setStatus(EVMC_SUCCESS); // "Light" failure
       return;
     }
-    Frame->Msg.gas += CALL_GAS_STIPEND;
   }
 
   const auto Result = Frame->Host->call(NewMsg);
@@ -1412,7 +1421,17 @@ void CallHandler::doExecute() {
                 Result.output_data, CopySize);
   }
 
-  const auto GasUsed = NewMsg.gas - Result.gas_left;
+  const uint64_t CallGas =
+      NewMsg.gas > 0 ? static_cast<uint64_t>(NewMsg.gas) : 0;
+  uint64_t GasLeft =
+      Result.gas_left > 0 ? static_cast<uint64_t>(Result.gas_left) : 0;
+  if (Result.status_code != EVMC_SUCCESS && Result.status_code != EVMC_REVERT) {
+    GasLeft = 0;
+  }
+  uint64_t GasUsed = CallGas > GasLeft ? CallGas - GasLeft : 0;
+  if (TransfersValue) {
+    GasUsed = GasUsed > CALL_GAS_STIPEND ? GasUsed - CALL_GAS_STIPEND : 0;
+  }
   chargeGas(Frame, GasUsed); // it's safe to charge gas here
 
   // Track subcall refund at Instance level
@@ -1478,12 +1497,23 @@ void SelfDestructHandler::doExecute() {
   intx::uint256 BeneficiaryAddr = Frame->pop();
   const auto Beneficiary = intx::be::trunc<evmc::address>(BeneficiaryAddr);
 
-  // EIP-161: charge account creation cost only if a new account is created.
   const auto Rev = currentRevision();
-  if (Rev >= EVMC_SPURIOUS_DRAGON &&
-      !Frame->Host->account_exists(Beneficiary)) {
-    const auto Balance = Frame->Host->get_balance(Frame->Msg.recipient);
-    if (intx::be::load<intx::uint256>(Balance) != 0) {
+  // EIP-2929: charge cold account access cost if needed.
+  if (Rev >= EVMC_BERLIN) {
+    const bool IsCold =
+        Frame->Host->access_account(Beneficiary) == EVMC_ACCESS_COLD;
+    if (IsCold && !chargeGas(Frame, COLD_ACCOUNT_ACCESS_COST)) {
+      Context->setStatus(EVMC_OUT_OF_GAS);
+      return;
+    }
+  }
+
+  // EIP-161: if target account does not exist AND self has balance to transfer,
+  // charge account creation cost.
+  if (Rev >= EVMC_SPURIOUS_DRAGON) {
+    evmc::bytes32 SelfBalance = Frame->Host->get_balance(Frame->Msg.recipient);
+    if (intx::be::load<intx::uint256>(SelfBalance) != 0 &&
+        !Frame->Host->account_exists(Beneficiary)) {
       if (!chargeGas(Frame, ACCOUNT_CREATION_COST)) {
         Context->setStatus(EVMC_OUT_OF_GAS);
         return;
@@ -1491,22 +1521,10 @@ void SelfDestructHandler::doExecute() {
     }
   }
 
-  // EIP-2929: charge warm access cost, plus additional cold cost if needed.
-  if (Rev >= EVMC_BERLIN) {
-    const bool IsCold =
-        Frame->Host->access_account(Beneficiary) == EVMC_ACCESS_COLD;
-    if (!chargeGas(Frame, WARM_ACCOUNT_ACCESS_COST)) {
-      Context->setStatus(EVMC_OUT_OF_GAS);
-      return;
-    }
-    if (IsCold && !chargeGas(Frame, ADDITIONAL_COLD_ACCOUNT_ACCESS_COST)) {
-      Context->setStatus(EVMC_OUT_OF_GAS);
-      return;
-    }
-  }
-
   Frame->Host->selfdestruct(Frame->Msg.recipient, Beneficiary);
 
+  Context->setStatus(EVMC_SUCCESS);
+  // Return remaining gas to parent frame before freeing current frame.
   uint64_t RemainingGas = Frame->Msg.gas;
   Context->freeBackFrame();
   if (Context->getCurFrame() != nullptr) {

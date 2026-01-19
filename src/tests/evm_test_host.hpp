@@ -12,6 +12,7 @@
 #include "utils/evm.h"
 #include "utils/rlp_encoding.h"
 
+#include <utility>
 #include <unordered_set>
 
 using namespace zen;
@@ -42,6 +43,8 @@ private:
   evmc_revision Revision = zen::evm::DEFAULT_REVISION;
   std::unordered_map<evmc::address, std::unordered_set<evmc::bytes32>>
       PrewarmStorageKeys;
+  std::unordered_set<evmc::address> CreatedInTx;
+  std::unordered_set<evmc::address> PendingSelfdestructs;
 
 public:
   struct AccountInitEntry {
@@ -114,6 +117,8 @@ public:
     uint64_t GasLimit = Config.GasLimit;
     const evmc_revision ActiveRevision = Config.Revision;
     Revision = ActiveRevision;
+    CreatedInTx.clear();
+    PendingSelfdestructs.clear();
     if (GasLimit == 0) {
       if (Config.Message.gas < 0) {
         Result.ErrorMessage = "Invalid gas provided in message";
@@ -160,6 +165,9 @@ public:
     }
 
     if (IsCreateTx) {
+      auto SenderIt = accounts.find(Msg.sender);
+      uint64_t SenderNonceBefore =
+          SenderIt != accounts.end() ? SenderIt->second.nonce : 0;
       auto CreateResult = handleCreate(Msg);
 
       if (CreateResult.output_data && CreateResult.output_size > 0) {
@@ -187,6 +195,15 @@ public:
       if (Result.GasCharged != 0) {
         settleGasCharges(Result.GasCharged, Config, Msg, Result);
       }
+      SenderIt = accounts.find(Msg.sender);
+      if (SenderIt != accounts.end()) {
+        SenderIt->second.nonce = SenderNonceBefore + 1;
+      } else {
+        auto &SenderAcc = accounts[Msg.sender];
+        ensureAccountHasCodeHash(SenderAcc);
+        SenderAcc.nonce = SenderNonceBefore + 1;
+      }
+      finalizeSelfdestructs();
       return Result;
     }
 
@@ -283,7 +300,63 @@ public:
       settleGasCharges(Result.GasCharged, Config, Msg, Result);
     }
 
+    finalizeSelfdestructs();
     return Result;
+  }
+
+  bool account_exists(const evmc::address &Addr) const noexcept override {
+    auto It = accounts.find(Addr);
+    if (It == accounts.end()) {
+      return false;
+    }
+    const auto &Acc = It->second;
+    if (Acc.nonce != 0) {
+      return true;
+    }
+    if (!Acc.code.empty()) {
+      return true;
+    }
+    if (std::memcmp(Acc.codehash.bytes, EMPTY_CODE_HASH.bytes, 32) != 0) {
+      return true;
+    }
+    return toUint256Bytes(Acc.balance) != 0;
+  }
+
+  bool selfdestruct(const evmc::address &Addr,
+                    const evmc::address &Beneficiary) noexcept override {
+    const bool First = evmc::MockedHost::selfdestruct(Addr, Beneficiary);
+
+    auto It = accounts.find(Addr);
+    if (It == accounts.end()) {
+      return First;
+    }
+
+    auto &SelfAcc = It->second;
+    ensureAccountHasCodeHash(SelfAcc);
+
+    const bool CreatedThisTx = CreatedInTx.count(Addr) > 0;
+    const bool ShouldDelete =
+        (Revision < EVMC_CANCUN) || CreatedThisTx;
+
+    intx::uint256 SelfBalance = toUint256Bytes(SelfAcc.balance);
+    if (SelfBalance != 0) {
+      if (Beneficiary != Addr || ShouldDelete) {
+        if (Beneficiary != Addr) {
+          auto &BenefAcc = accounts[Beneficiary];
+          ensureAccountHasCodeHash(BenefAcc);
+          intx::uint256 BenefBalance = toUint256Bytes(BenefAcc.balance);
+          BenefBalance += SelfBalance;
+          BenefAcc.balance = toBytes32(BenefBalance);
+        }
+        SelfAcc.balance = toBytes32(intx::uint256{0});
+      }
+    }
+
+    if (ShouldDelete) {
+      PendingSelfdestructs.insert(Addr);
+    }
+
+    return First;
   }
 
   evmc::Result call(const evmc_message &Msg) noexcept override {
@@ -320,6 +393,9 @@ public:
       ZEN_LOG_DEBUG(
           "No contract found for code address {}, return parent result",
           evmc::hex(evmc::bytes_view(CodeAddr.bytes, 20)).c_str());
+      if (Msg.kind == EVMC_CALL && !applyCallValueTransfer(Msg)) {
+        return ParentResult;
+      }
       if (ParentResult.status_code == EVMC_SUCCESS &&
           ParentResult.gas_left == 0) {
         ParentResult.gas_left = Msg.gas;
@@ -373,8 +449,33 @@ public:
       evmc_message CallMsg = Msg;
       evmc::Result ExecResult{};
 
+      int64_t InterpGasLeft = -1;
       try {
-        RT->callEVMMain(*Inst, CallMsg, ExecResult);
+        if (!applyCallValueTransfer(CallMsg)) {
+          restoreHostState(StateSnapshot);
+          return ParentResult;
+        }
+        const bool UseInterp =
+            (RT->getConfig().Mode == common::RunMode::MultipassMode) &&
+            (Msg.depth > 0);
+        if (UseInterp) {
+          Inst->clearMessageCache();
+          evmc_message MsgWithCode = CallMsg;
+          MsgWithCode.code =
+              reinterpret_cast<uint8_t *>(Inst->getModule()->Code);
+          MsgWithCode.code_size = Inst->getModule()->CodeSize;
+          Inst->setExeResult(evmc::Result{EVMC_SUCCESS, 0, 0});
+          evm::InterpreterExecContext Ctx(Inst);
+          evm::BaseInterpreter Interpreter(Ctx);
+          Ctx.allocTopFrame(&MsgWithCode);
+          Interpreter.interpret();
+          ExecResult =
+              std::move(const_cast<evmc::Result &>(Ctx.getExeResult()));
+          InterpGasLeft = static_cast<int64_t>(Inst->getGas());
+          Inst->popMessage();
+        } else {
+          RT->callEVMMain(*Inst, CallMsg, ExecResult);
+        }
       } catch (const std::exception &E) {
         ZEN_LOG_ERROR("Error in recursive call: {}", E.what());
         restoreHostState(StateSnapshot);
@@ -387,20 +488,13 @@ public:
       } else {
         ReturnData.clear();
       }
-      int64_t RemainingGas = static_cast<int64_t>(Inst->getGas());
-      int64_t GasRefund = static_cast<int64_t>(Inst->getGasRefund());
-      if (std::getenv("TRACE_WARM_COINBASE")) {
-        const auto ErrCode = Inst->getError().getCode();
-        std::fprintf(stderr,
-                     "[TRACE_WARM_COINBASE] depth=%d kind=%d to=%s gas=%lld "
-                     "status=%d gas_left=%lld err=%u\n",
-                     Msg.depth, static_cast<int>(Msg.kind),
-                     evmc::hex(evmc::bytes_view(Msg.recipient.bytes, 20)).c_str(),
-                     static_cast<long long>(Msg.gas),
-                     static_cast<int>(ExecResult.status_code),
-                     static_cast<long long>(RemainingGas),
-                     static_cast<unsigned>(ErrCode));
+      int64_t RemainingGas = (InterpGasLeft >= 0)
+                                 ? InterpGasLeft
+                                 : ExecResult.gas_left;
+      if (RemainingGas < 0) {
+        RemainingGas = static_cast<int64_t>(Inst->getGas());
       }
+      int64_t GasRefund = static_cast<int64_t>(Inst->getGasRefund());
       if (shouldRevertState(ExecResult.status_code)) {
         restoreHostState(StateSnapshot);
       }
@@ -491,11 +585,23 @@ public:
       // 2 Check for address conflicts (if the address already exists and is not
       // empty, creation will fail)
       evmc::address NewAddr = Msg.recipient;
+      if (Revision >= EVMC_BERLIN) {
+        access_account(NewAddr);
+      }
       auto It = accounts.find(NewAddr);
-      if (It != accounts.end() && !isCreateCollision(It->second)) {
-        ZEN_LOG_ERROR("Create collision at address {}",
-                      evmc::hex(NewAddr).c_str());
-        return evmc::Result{EVMC_FAILURE, Msg.gas, 0, NewAddr};
+      const bool IsNewAccount = (It == accounts.end());
+      if (!IsNewAccount) {
+        ensureAccountHasCodeHash(It->second);
+        if (isCreateCollision(It->second)) {
+          ZEN_LOG_ERROR("Create collision at address {}",
+                        evmc::hex(NewAddr).c_str());
+          auto SenderIt = accounts.find(Msg.sender);
+          if (SenderIt != accounts.end() &&
+              (Msg.kind == EVMC_CREATE || Msg.kind == EVMC_CREATE2)) {
+            SenderIt->second.nonce++;
+          }
+          return evmc::Result{EVMC_FAILURE, 0, 0, NewAddr};
+        }
       }
       // Create EVM module and instance for the new contract
       uint64_t Counter = ModuleCounter++;
@@ -540,8 +646,11 @@ public:
       // 3 Create new account status
       auto &NewAcc = accounts[NewAddr];
       NewAcc.nonce = Revision >= EVMC_SPURIOUS_DRAGON ? 1 : 0;
-      NewAcc.balance = evmc::bytes32{0};
+      if (IsNewAccount) {
+        NewAcc.balance = evmc::bytes32{0};
+      }
       applyPrewarmedStorageKeys(NewAddr, NewAcc);
+      CreatedInTx.insert(NewAddr);
 
       // 4 Transfer the balance (from the sender to the new account)
       auto &SenderAcc = accounts[Msg.sender];
@@ -563,8 +672,29 @@ public:
 
       evmc_message CallMsg = Msg;
       evmc::Result ExecResult{};
+      int64_t InterpGasLeft = -1;
       try {
-        RT->callEVMMain(*Inst, CallMsg, ExecResult);
+        const bool UseInterp =
+            (RT->getConfig().Mode == common::RunMode::MultipassMode) &&
+            (Msg.depth > 0);
+        if (UseInterp) {
+          Inst->clearMessageCache();
+          evmc_message MsgWithCode = CallMsg;
+          MsgWithCode.code =
+              reinterpret_cast<uint8_t *>(Inst->getModule()->Code);
+          MsgWithCode.code_size = Inst->getModule()->CodeSize;
+          Inst->setExeResult(evmc::Result{EVMC_SUCCESS, 0, 0});
+          evm::InterpreterExecContext Ctx(Inst);
+          evm::BaseInterpreter Interpreter(Ctx);
+          Ctx.allocTopFrame(&MsgWithCode);
+          Interpreter.interpret();
+          ExecResult =
+              std::move(const_cast<evmc::Result &>(Ctx.getExeResult()));
+          InterpGasLeft = static_cast<int64_t>(Inst->getGas());
+          Inst->popMessage();
+        } else {
+          RT->callEVMMain(*Inst, CallMsg, ExecResult);
+        }
       } catch (const std::exception &E) {
         restoreHostState(StateSnapshot);
         ZEN_LOG_ERROR("Error in handleCreate execution: {}", E.what());
@@ -578,7 +708,12 @@ public:
         ReturnData.clear();
       }
 
-      int64_t RemainingGas = static_cast<int64_t>(Inst->getGas());
+      int64_t RemainingGas = (InterpGasLeft >= 0)
+                                 ? InterpGasLeft
+                                 : ExecResult.gas_left;
+      if (RemainingGas < 0) {
+        RemainingGas = static_cast<int64_t>(Inst->getGas());
+      }
       const int64_t GasRefund =
           static_cast<int64_t>(Inst->getGasRefund());
 
@@ -594,6 +729,15 @@ public:
         Failure.create_address = NewAddr;
         return Failure;
       }
+      auto NewAccIt = accounts.find(NewAddr);
+      if (NewAccIt == accounts.end()) {
+        restoreHostState(StateSnapshot);
+        evmc::Result Failure(EVMC_FAILURE, RemainingGas, GasRefund);
+        Failure.create_address = NewAddr;
+        return Failure;
+      }
+      auto &NewAccPost = NewAccIt->second;
+
       if (!ReturnData.empty()) {
         if (ReturnData.size() > MAX_CODE_SIZE) {
           restoreHostState(StateSnapshot);
@@ -616,25 +760,28 @@ public:
           return Failure;
         }
         RemainingGas -= static_cast<int64_t>(CodeDepositCost);
-        NewAcc.code = evmc::bytes(ReturnData.data(), ReturnData.size());
+        NewAccPost.code = evmc::bytes(ReturnData.data(), ReturnData.size());
         const std::vector<uint8_t> CodeHashVec =
             host::evm::crypto::keccak256(ReturnData);
         assert(CodeHashVec.size() == 32 && "Keccak256 hash must be 32 bytes");
         evmc::bytes32 CodeHash;
         std::memcpy(CodeHash.bytes, CodeHashVec.data(), 32);
-        NewAcc.codehash = CodeHash;
+        NewAccPost.codehash = CodeHash;
       } else {
-        NewAcc.codehash = EMPTY_CODE_HASH;
+        NewAccPost.codehash = EMPTY_CODE_HASH;
       }
       // 7 Update the sender's nonce (for CREATE, the nonce must be incremented)
       if (Msg.kind == EVMC_CREATE || Msg.kind == EVMC_CREATE2) {
-        SenderAcc.nonce++;
+        auto SenderIt = accounts.find(Msg.sender);
+        if (SenderIt != accounts.end()) {
+          SenderIt->second.nonce++;
+        }
       }
 
       evmc::Result CreateResult(EVMC_SUCCESS, RemainingGas, GasRefund,
-                                NewAcc.code.empty() ? nullptr
-                                                    : NewAcc.code.data(),
-                                NewAcc.code.size());
+                                NewAccPost.code.empty() ? nullptr
+                                                        : NewAccPost.code.data(),
+                                NewAccPost.code.size());
       CreateResult.create_address = NewAddr;
       return CreateResult;
     } catch (const std::exception &E) {
@@ -649,16 +796,24 @@ private:
     decltype(accounts) Accounts;
     decltype(recorded_logs) Logs;
     decltype(recorded_selfdestructs) Selfdestructs;
+    std::unordered_set<evmc::address> CreatedAccounts;
+    std::unordered_set<evmc::address> PendingSelfdestructsSnapshot;
+    decltype(recorded_account_accesses) RecordedAccountAccesses;
   };
 
   HostStateSnapshot captureHostState() const {
-    return HostStateSnapshot{accounts, recorded_logs, recorded_selfdestructs};
+    return HostStateSnapshot{accounts, recorded_logs, recorded_selfdestructs,
+                             CreatedInTx, PendingSelfdestructs,
+                             recorded_account_accesses};
   }
 
   void restoreHostState(const HostStateSnapshot &Snapshot) {
     accounts = Snapshot.Accounts;
     recorded_logs = Snapshot.Logs;
     recorded_selfdestructs = Snapshot.Selfdestructs;
+    CreatedInTx = Snapshot.CreatedAccounts;
+    PendingSelfdestructs = Snapshot.PendingSelfdestructsSnapshot;
+    recorded_account_accesses = Snapshot.RecordedAccountAccesses;
   }
 
   static bool shouldRevertState(evmc_status_code Status) {
@@ -729,6 +884,33 @@ private:
     return true;
   }
 
+  bool applyCallValueTransfer(const evmc_message &Msg) {
+    intx::uint256 TransferValue = toUint256BE(Msg.value);
+    const bool SameAddress =
+        std::memcmp(Msg.sender.bytes, Msg.recipient.bytes, 20) == 0;
+    if (TransferValue == 0 || SameAddress) {
+      return true;
+    }
+
+    auto &SenderAccount = accounts[Msg.sender];
+    ensureAccountHasCodeHash(SenderAccount);
+    auto &RecipientAccount = accounts[Msg.recipient];
+    ensureAccountHasCodeHash(RecipientAccount);
+    applyPrewarmedStorageKeys(Msg.recipient, RecipientAccount);
+
+    intx::uint256 SenderBalance = toUint256Bytes(SenderAccount.balance);
+    intx::uint256 RecipientBalance = toUint256Bytes(RecipientAccount.balance);
+    if (SenderBalance < TransferValue) {
+      return false;
+    }
+
+    SenderBalance -= TransferValue;
+    RecipientBalance += TransferValue;
+    SenderAccount.balance = toBytes32(SenderBalance);
+    RecipientAccount.balance = toBytes32(RecipientBalance);
+    return true;
+  }
+
   void settleGasCharges(uint64_t GasCharged,
                         const TransactionExecutionConfig &Config,
                         const evmc_message &Msg,
@@ -786,6 +968,16 @@ private:
       CoinbaseBalance += CoinbaseReward;
       CoinbaseAccount.balance = toBytes32(CoinbaseBalance);
     }
+  }
+
+  void finalizeSelfdestructs() {
+    if (PendingSelfdestructs.empty()) {
+      return;
+    }
+    for (const auto &Addr : PendingSelfdestructs) {
+      accounts.erase(Addr);
+    }
+    PendingSelfdestructs.clear();
   }
 };
 

@@ -8,6 +8,7 @@
 #include "runtime/evm_instance.h"
 #include "runtime/evm_module.h"
 #include <cstdint>
+#include <cstring>
 #include <evmc/evmc.h>
 #include <vector>
 
@@ -586,7 +587,8 @@ void evmSetReturn(zen::runtime::EVMInstance *Instance, uint64_t Offset,
   }
   Instance->setReturnData(ReturnData);
 
-  evmc::Result ExeResult(EVMC_SUCCESS, 0,
+  const uint64_t RemainingGas = Instance->getGas();
+  evmc::Result ExeResult(EVMC_SUCCESS, RemainingGas,
                          Instance ? Instance->getGasRefund() : 0,
                          ReturnData.data(), ReturnData.size());
   Instance->setExeResult(std::move(ExeResult));
@@ -870,6 +872,9 @@ const uint8_t *evmHandleCreateInternal(zen::runtime::EVMInstance *Instance,
       CreateMsg.gas > 0 ? static_cast<uint64_t>(CreateMsg.gas) : 0;
   uint64_t GasLeft =
       Result.gas_left > 0 ? static_cast<uint64_t>(Result.gas_left) : 0;
+  if (Result.status_code != EVMC_SUCCESS && Result.status_code != EVMC_REVERT) {
+    GasLeft = 0;
+  }
   uint64_t GasUsed = ProvidedGas > GasLeft ? ProvidedGas - GasLeft : 0;
   if (GasUsed != 0) {
     Instance->chargeGas(GasUsed);
@@ -948,9 +953,14 @@ static uint64_t evmHandleCallInternal(zen::runtime::EVMInstance *Instance,
     if (!HasEnoughBalance) {
       ValueCost -= zen::evm::CALL_GAS_STIPEND;
     }
+    const bool ChargeAccountCreation =
+        CallKind == EVMC_CALL && HasEnoughBalance &&
+        !Module->Host->account_exists(TargetAddr);
+    if (ChargeAccountCreation) {
+      ValueCost -= zen::evm::CALL_GAS_STIPEND;
+    }
     Instance->chargeGas(ValueCost);
-    if (CallKind == EVMC_CALL && HasEnoughBalance &&
-        !Module->Host->account_exists(TargetAddr)) {
+    if (ChargeAccountCreation) {
       Instance->chargeGas(zen::evm::ACCOUNT_CREATION_COST);
     }
   }
@@ -985,17 +995,6 @@ static uint64_t evmHandleCallInternal(zen::runtime::EVMInstance *Instance,
   }
   if (TransfersValue) {
     CallGas += zen::evm::CALL_GAS_STIPEND;
-    GasLeft += zen::evm::CALL_GAS_STIPEND;
-    Instance->setGas(GasLeft);
-    evmc_message *CurrentMsgMutable =
-        const_cast<evmc_message *>(Instance->getCurrentMessage());
-    if (CurrentMsgMutable) {
-      CurrentMsgMutable->gas = static_cast<int64_t>(GasLeft);
-    }
-    if (!HasEnoughBalance) {
-      Instance->setReturnData({});
-      return 0;
-    }
   }
 
   // Create message for call
@@ -1021,17 +1020,6 @@ static uint64_t evmHandleCallInternal(zen::runtime::EVMInstance *Instance,
       .code_size = 0,
   };
 
-  // EIP-150: cap call gas to 63/64 of available gas.
-  if (Rev >= EVMC_TANGERINE_WHISTLE) {
-    const uint64_t AvailableGas = Instance->getGas();
-    const uint64_t MaxCallGas = AvailableGas - AvailableGas / 64;
-    const uint64_t RequestedGas =
-        CallMsg.gas > 0 ? static_cast<uint64_t>(CallMsg.gas) : 0;
-    if (RequestedGas > MaxCallGas) {
-      CallMsg.gas = static_cast<int64_t>(MaxCallGas);
-    }
-  }
-
   Instance->pushMessage(&CallMsg);
   evmc::Result Result = Module->Host->call(CallMsg);
   Instance->popMessage();
@@ -1039,7 +1027,15 @@ static uint64_t evmHandleCallInternal(zen::runtime::EVMInstance *Instance,
   // Charge the caller for the gas actually consumed by the callee.
   CallGas = CallMsg.gas > 0 ? static_cast<uint64_t>(CallMsg.gas) : 0;
   GasLeft = Result.gas_left > 0 ? static_cast<uint64_t>(Result.gas_left) : 0;
+  if (Result.status_code != EVMC_SUCCESS && Result.status_code != EVMC_REVERT) {
+    GasLeft = 0;
+  }
   uint64_t GasUsed = CallGas > GasLeft ? CallGas - GasLeft : 0;
+  if (TransfersValue) {
+    GasUsed = GasUsed > zen::evm::CALL_GAS_STIPEND
+                  ? GasUsed - zen::evm::CALL_GAS_STIPEND
+                  : 0;
+  }
   if (GasUsed > 0) {
     if (GasUsed > 0) {
       Instance->chargeGas(GasUsed);
@@ -1293,13 +1289,12 @@ void evmHandleSelfDestruct(zen::runtime::EVMInstance *Instance,
     }
   }
 
-  // EIP-2929: charge warm access cost, plus additional cold cost if needed.
+  // EIP-2929: charge cold account access cost if needed.
   if (Rev >= EVMC_BERLIN) {
     const bool IsCold =
         Module->Host->access_account(BenefAddr) == EVMC_ACCESS_COLD;
-    Instance->chargeGas(zen::evm::WARM_ACCOUNT_ACCESS_COST);
     if (IsCold) {
-      Instance->chargeGas(zen::evm::ADDITIONAL_COLD_ACCOUNT_ACCESS_COST);
+      Instance->chargeGas(zen::evm::COLD_ACCOUNT_ACCESS_COST);
     }
   }
 
@@ -1315,7 +1310,7 @@ void evmHandleSelfDestruct(zen::runtime::EVMInstance *Instance,
   } else {
     Instance->setGas(RemainingGas);
     evmc::Result ExeResult(
-        EVMC_SUCCESS, 0, Instance ? Instance->getGasRefund() : 0,
+        EVMC_SUCCESS, RemainingGas, Instance ? Instance->getGasRefund() : 0,
         Instance->getReturnData().data(), Instance->getReturnData().size());
     Instance->setExeResult(std::move(ExeResult));
     Instance->exit(0);

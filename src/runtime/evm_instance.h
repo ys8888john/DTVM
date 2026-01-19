@@ -72,6 +72,12 @@ public:
   void pushMessage(evmc_message *Msg);
   void popMessage();
   evmc_message *getCurrentMessage() const { return CurrentMessage; }
+  evmc_message *getParentMessage() const {
+    if (MessageStack.size() < 2) {
+      return nullptr;
+    }
+    return MessageStack[MessageStack.size() - 2];
+  }
   bool isStaticMode() const {
     const evmc_message *Msg = getCurrentMessage();
     return Msg && (Msg->flags & EVMC_STATIC) != 0;

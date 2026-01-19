@@ -543,6 +543,8 @@ private:
           Operand Beneficiary = pop();
           handleEndBlock();
           Builder.handleSelfDestruct(Beneficiary);
+          handleStop();
+          InDeadCode = true;
           break;
         }
 

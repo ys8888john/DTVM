@@ -784,6 +784,28 @@ static bool buildGasChunksSPP(const zen::common::Byte *Code, size_t CodeSize,
     return true;
   }
 
+  bool HasDynamicJump = false;
+  for (const auto &Block : Blocks) {
+    if (!isJumpOpcode(Block.LastOpcode)) {
+      continue;
+    }
+    uint32_t DestPc = 0;
+    if (!resolveConstantJumpTarget(JumpDestMap, PushValueMap, CodeSize, Block,
+                                   DestPc)) {
+      HasDynamicJump = true;
+      break;
+    }
+  }
+  if (HasDynamicJump) {
+    for (const auto &Block : Blocks) {
+      if (Block.Start < CodeSize) {
+        GasChunkEnd[Block.Start] = Block.End;
+        GasChunkCost[Block.Start] = Block.Cost;
+      }
+    }
+    return true;
+  }
+
   std::vector<uint32_t> JumpDestBlocks;
   if (!JumpDestMap.empty()) {
     std::vector<uint8_t> SeenBlocks(Blocks.size(), 0);

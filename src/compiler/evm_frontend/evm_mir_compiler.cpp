@@ -650,10 +650,8 @@ typename EVMMirBuilder::Operand EVMMirBuilder::stackGet(int32_t IndexFromTop) {
 }
 
 void EVMMirBuilder::handleStop() {
-  createInstruction<BrInstruction>(true, Ctx, ReturnBB);
-  addSuccessor(ReturnBB);
-  setInsertBlock(ReturnBB);
-  handleVoidReturn();
+  auto Zero = createU256ConstOperand(intx::uint256{0});
+  handleReturn(Zero, Zero);
 }
 
 void EVMMirBuilder::drainGas() {

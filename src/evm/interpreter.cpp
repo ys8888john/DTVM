@@ -226,7 +226,7 @@ handleExecutionStatus(zen::evm::EVMFrame *&Frame,
   case EVMC_STATIC_MODE_VIOLATION:
   case EVMC_INSUFFICIENT_BALANCE:
     Frame->Msg.gas = 0;
-    Context.getInstance()->setGasRefund(0);
+    Context.getInstance()->setGasRefund(Frame->GasRefundSnapshot);
     Context.setReturnData(std::vector<uint8_t>());
     Context.freeBackFrame();
     Frame = Context.getCurFrame();
@@ -243,7 +243,7 @@ handleExecutionStatus(zen::evm::EVMFrame *&Frame,
   case EVMC_FAILURE:
   default:
     Frame->Msg.gas = 0;
-    Context.getInstance()->setGasRefund(0);
+    Context.getInstance()->setGasRefund(Frame->GasRefundSnapshot);
     Context.setReturnData(std::vector<uint8_t>());
     Context.freeBackFrame();
     Frame = Context.getCurFrame();
@@ -269,6 +269,7 @@ EVMFrame *InterpreterExecContext::allocTopFrame(evmc_message *Msg) {
 
   Frame.Msg = *Msg;
   Inst->pushMessage(&Frame.Msg);
+  Frame.GasRefundSnapshot = Inst ? Inst->getGasRefund() : 0;
 
   return &Frame;
 }
@@ -349,7 +350,8 @@ void BaseInterpreter::interpret() {
         const evmc_opcode Op = static_cast<evmc_opcode>(OpcodeByte);
 
         switch (Op) {
-        case evmc_opcode::OP_STOP:
+        case evmc_opcode::OP_STOP: {
+          const uint64_t RemainingGas = Frame->Msg.gas;
           Context.freeBackFrame();
           Frame = Context.getCurFrame();
           if (!Frame) {
@@ -361,8 +363,9 @@ void BaseInterpreter::interpret() {
             Context.setExeResult(std::move(ExeResult));
             return;
           }
+          Frame->Msg.gas += RemainingGas;
           RestartDispatch = true;
-          break;
+        } break;
 
         case evmc_opcode::OP_ADD:
           AddHandler::doExecute();
