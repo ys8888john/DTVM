@@ -594,6 +594,8 @@ private:
   template <size_t N>
   U256Inst convertOperandToUNInstruction(const Operand &Param);
 
+  MBasicBlock *getOrCreateIndirectJumpBB();
+
   CompilerContext &Ctx;
   MFunction *CurFunc = nullptr;
   MBasicBlock *CurBB = nullptr;
@@ -617,6 +619,8 @@ private:
   std::map<uint64_t, std::vector<MBasicBlock *>> JumpHashTable;
   std::map<uint64_t, std::vector<uint64_t>> JumpHashReverse;
   uint64_t HashMask = 0;
+  Variable *JumpTargetVar = nullptr;
+  MBasicBlock *IndirectJumpBB = nullptr;
 
   // Stack check block for stack overflow/underflow checking
   MBasicBlock *StackCheckBB = nullptr;
