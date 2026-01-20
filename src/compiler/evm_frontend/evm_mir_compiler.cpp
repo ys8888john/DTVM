@@ -2020,7 +2020,10 @@ typename EVMMirBuilder::Operand EVMMirBuilder::handleBaseFee() {
 
 typename EVMMirBuilder::Operand EVMMirBuilder::handleBlobHash(Operand Index) {
   const auto &RuntimeFunctions = getRuntimeFunctionTable();
-  normalizeOperandU64(Index);
+  // Use max uint64_t value if the index is not 64-bit, because the blob hash
+  // won't trigger out-of-gas when the index is out of range.
+  uint64_t Non64Value = std::numeric_limits<uint64_t>::max();
+  normalizeOperandU64(Index, &Non64Value);
   return callRuntimeFor<const uint8_t *, uint64_t>(RuntimeFunctions.GetBlobHash,
                                                    Index);
 }
@@ -2888,23 +2891,29 @@ EVMMirBuilder::convertCallResult(MInstruction *CallInstr) {
   return Operand();
 }
 
-void EVMMirBuilder::normalizeOperandU64(Operand &Param) {
+void EVMMirBuilder::normalizeOperandU64(Operand &Param, uint64_t *Value) {
   if (Param.getType() != EVMType::UINT256) {
     return;
   }
   if (Param.isConstant()) {
-    normalizeOperandU64Const(Param);
+    normalizeOperandU64Const(Param, Value);
   } else {
-    normalizeOperandU64NonConst(Param);
+    normalizeOperandU64NonConst(Param, Value);
   }
 }
 
-void EVMMirBuilder::normalizeOperandU64Const(Operand &Param) {
+void EVMMirBuilder::normalizeOperandU64Const(Operand &Param, uint64_t *Value) {
   const auto &C = Param.getConstValue();
   bool FitsU64 = (C[1] == 0 && C[2] == 0 && C[3] == 0);
 
   MType *I64Type = EVMFrontendContext::getMIRTypeFromEVMType(EVMType::UINT64);
   if (!FitsU64) {
+    if (Value != nullptr) {
+      // Convert Value to const U256 and assign to Param
+      U256Value NewConstValue = {*Value, 0, 0, 0};
+      Param = Operand(NewConstValue);
+      return;
+    }
     MInstruction *TrueCond = createIntConstInstruction(I64Type, 1);
     MBasicBlock *TrapBB =
         getOrCreateExceptionSetBB(ErrorCode::GasLimitExceeded);
@@ -2923,7 +2932,8 @@ void EVMMirBuilder::normalizeOperandU64Const(Operand &Param) {
   Param = Operand(NewVal, EVMType::UINT256);
 }
 
-void EVMMirBuilder::normalizeOperandU64NonConst(Operand &Param) {
+void EVMMirBuilder::normalizeOperandU64NonConst(Operand &Param,
+                                                uint64_t *Value) {
   // Extract four 64-bit parts [low, mid-low, mid-high, high]
   U256Inst Parts = extractU256Operand(Param);
 
@@ -2947,16 +2957,31 @@ void EVMMirBuilder::normalizeOperandU64NonConst(Operand &Param) {
   MInstruction *ZeroCond = createIntConstInstruction(I64Type, 0);
   MInstruction *IsInvalid = createInstruction<CmpInstruction>(
       false, CmpInstruction::Predicate::ICMP_EQ, &Ctx.I64Type, IsU64, ZeroCond);
-  MBasicBlock *TrapBB = getOrCreateExceptionSetBB(ErrorCode::GasLimitExceeded);
-  MBasicBlock *ContinueBB = createBasicBlock();
-  createInstruction<BrIfInstruction>(true, Ctx, IsInvalid, TrapBB, ContinueBB);
-  addUniqueSuccessor(TrapBB);
-  addSuccessor(ContinueBB);
-  setInsertBlock(ContinueBB);
 
-  // Normalize Param to U256: [Selected, 0, 0, 0]
-  U256Inst NewVal = {Parts[0], Zero, Zero, Zero};
-  Param = Operand(NewVal, EVMType::UINT256);
+  if (Value != nullptr) {
+    // Use SelectInstruction to choose between Param's first part and provided
+    // Value
+    MInstruction *ValueInst = createIntConstInstruction(I64Type, *Value);
+    MInstruction *SelectedLow = createInstruction<SelectInstruction>(
+        false, I64Type, IsU64, Parts[0], ValueInst);
+
+    // Rebuild Param as a normalized U256 with selected low part, others=0
+    U256Inst NewVal = {SelectedLow, Zero, Zero, Zero};
+    Param = Operand(NewVal, EVMType::UINT256);
+  } else {
+    MBasicBlock *TrapBB =
+        getOrCreateExceptionSetBB(ErrorCode::GasLimitExceeded);
+    MBasicBlock *ContinueBB = createBasicBlock();
+    createInstruction<BrIfInstruction>(true, Ctx, IsInvalid, TrapBB,
+                                       ContinueBB);
+    addUniqueSuccessor(TrapBB);
+    addSuccessor(ContinueBB);
+    setInsertBlock(ContinueBB);
+
+    // Normalize Param to U256: [Selected, 0, 0, 0]
+    U256Inst NewVal = {Parts[0], Zero, Zero, Zero};
+    Param = Operand(NewVal, EVMType::UINT256);
+  }
 }
 
 // Template function for no-argument runtime calls
