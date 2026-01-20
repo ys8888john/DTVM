@@ -10,6 +10,7 @@
 #include "common/mem_pool.h"
 #include "common/type.h"
 #ifdef ZEN_ENABLE_EVM
+#include "evm/evm.h"
 #include "evmc/evmc.hpp"
 #endif // ZEN_ENABLE_EVM
 #include "runtime/config.h"
@@ -154,20 +155,24 @@ public:
   loadModule(const std::string &ModName, const void *Data, size_t DataSize,
              const std::string &EntryHint = "") noexcept;
 
+#ifdef ZEN_ENABLE_EVM
   /// \warning not thread-safe
   common::MayBe<EVMModule *>
   loadEVMModule(const std::string &Filename) noexcept;
 
   /// \warning not thread-safe
-  common::MayBe<EVMModule *> loadEVMModule(const std::string &ModName,
-                                           const void *Data,
-                                           size_t DataSize) noexcept;
+  common::MayBe<EVMModule *>
+  loadEVMModule(const std::string &ModName, const void *Data, size_t DataSize,
+                evmc_revision Rev = zen::evm::DEFAULT_REVISION) noexcept;
+#endif // ZEN_ENABLE_EVM
 
   /// \warning not thread-safe
   bool unloadModule(const Module *Mod) noexcept;
 
+#ifdef ZEN_ENABLE_EVM
   /// \warning not thread-safe
   bool unloadEVMModule(const EVMModule *Mod) noexcept;
+#endif // ZEN_ENABLE_EVM
 
   Isolation *createManagedIsolation() noexcept;
 
@@ -339,7 +344,10 @@ private:
   Module *loadModule(WASMSymbol ModName, CodeHolderUniquePtr CodeHolder,
                      const std::string &EntryHint = "");
 
-  EVMModule *loadEVMModule(EVMSymbol ModName, CodeHolderUniquePtr CodeHolder);
+#ifdef ZEN_ENABLE_EVM
+  EVMModule *loadEVMModule(EVMSymbol ModName, CodeHolderUniquePtr CodeHolder,
+                           evmc_revision Rev);
+#endif // ZEN_ENABLE_EVM
 
   void callWasmFunctionInInterpMode(Instance &Inst, uint32_t FuncIdx,
                                     const std::vector<TypedValue> &Args,
