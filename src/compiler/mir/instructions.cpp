@@ -186,6 +186,15 @@ void MInstruction::print(llvm::raw_ostream &OS) const {
        << getType() << ")";
     break;
   }
+  case EVM_UMUL128: {
+    OS << getOpcodeString(_opcode) << " (" << getOperand<0>() << ", "
+       << getOperand<1>() << ')';
+    break;
+  }
+  case EVM_UMUL128_HI: {
+    OS << getOpcodeString(_opcode) << " (" << getOperand<0>() << ')';
+    break;
+  }
   case WASM_CHECK: {
     OS << getOpcodeString(_opcode) << " (";
     switch (_opcode) {

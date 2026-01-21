@@ -668,6 +668,51 @@ private:
   }
 };
 
+// EVM 64x64->128 multiplication instruction (low 64-bit result).
+class EvmUmul128Instruction : public FixedOperandInstruction<2> {
+public:
+  template <typename... Arguments>
+  static EvmUmul128Instruction *create(Arguments &&...Args) {
+    return FixedOperandInstruction::create<EvmUmul128Instruction>(
+        std::forward<Arguments>(Args)...);
+  }
+
+  static bool classof(const MInstruction *Instr) {
+    return Instr->getKind() == EVM_UMUL128;
+  }
+
+private:
+  friend class FixedOperandInstruction;
+  EvmUmul128Instruction(Opcode Opc, MType *Type, MInstruction *LHS,
+                        MInstruction *RHS)
+      : FixedOperandInstruction(MInstruction::EVM_UMUL128, Opc, 2, Type) {
+    setOperand<0>(LHS);
+    setOperand<1>(RHS);
+  }
+};
+
+// Extract high 64-bit result from EVM umul128 instruction.
+class EvmUmul128HiInstruction : public FixedOperandInstruction<1> {
+public:
+  template <typename... Arguments>
+  static EvmUmul128HiInstruction *create(Arguments &&...Args) {
+    return FixedOperandInstruction::create<EvmUmul128HiInstruction>(
+        std::forward<Arguments>(Args)...);
+  }
+
+  static bool classof(const MInstruction *Instr) {
+    return Instr->getKind() == EVM_UMUL128_HI;
+  }
+
+private:
+  friend class FixedOperandInstruction;
+  EvmUmul128HiInstruction(MType *Type, MInstruction *MulInst)
+      : FixedOperandInstruction(MInstruction::EVM_UMUL128_HI, OP_evm_umul128_hi,
+                                1, Type) {
+    setOperand<0>(MulInst);
+  }
+};
+
 } // namespace COMPILER
 
 #endif // COMPILER_IR_INSTRUCTIONS_H

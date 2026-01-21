@@ -29,6 +29,8 @@ public:
     DREAD,
     LOAD,
     OVERFLOW_I128_BINARY,
+    EVM_UMUL128,
+    EVM_UMUL128_HI,
 
     //===---------- Statement Instructions ----------===//
     DASSIGN,

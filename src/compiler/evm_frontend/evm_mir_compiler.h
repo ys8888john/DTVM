@@ -550,6 +550,10 @@ private:
                                       MInstruction *ShiftAmount,
                                       MInstruction *IsLargeShift);
 
+  // Helper functions for inline U256 multiplication
+  MInstruction *createEvmUmul128(MInstruction *LHS, MInstruction *RHS);
+  MInstruction *createEvmUmul128Hi(MInstruction *MulInst);
+
   // ==================== EVM to MIR Opcode Mapping ====================
 
   Opcode getMirOpcode(BinaryOperator BinOpr);

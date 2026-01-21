@@ -45,6 +45,12 @@ public:
       visitWasmOverflowI128BinaryInstruction(
           static_cast<WasmOverflowI128BinaryInstruction &>(I));
       break;
+    case MInstruction::EVM_UMUL128:
+      visitEvmUmul128Instruction(static_cast<EvmUmul128Instruction &>(I));
+      break;
+    case MInstruction::EVM_UMUL128_HI:
+      visitEvmUmul128HiInstruction(static_cast<EvmUmul128HiInstruction &>(I));
+      break;
     case MInstruction::CMP:
       visitCmpInstruction(static_cast<CmpInstruction &>(I));
       break;
@@ -168,6 +174,12 @@ public:
   virtual void
   visitWasmOverflowI128BinaryInstruction(WasmOverflowI128BinaryInstruction &I) {
     VISIT_OPERANDS
+  }
+  virtual void visitEvmUmul128Instruction(EvmUmul128Instruction &I) {
+    VISIT_OPERAND_2
+  }
+  virtual void visitEvmUmul128HiInstruction(EvmUmul128HiInstruction &I) {
+    VISIT_OPERAND_1
   }
 
 protected:
