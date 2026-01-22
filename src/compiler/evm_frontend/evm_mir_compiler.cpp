@@ -3358,8 +3358,12 @@ void EVMMirBuilder::handleReturnDataCopy(Operand DestOffsetComponents,
                                          Operand SizeComponents) {
   const auto &RuntimeFunctions = getRuntimeFunctionTable();
   normalizeOperandU64(DestOffsetComponents);
-  normalizeOperandU64(OffsetComponents);
-  normalizeOperandU64(SizeComponents);
+  // Use max uint64_t value if the offset/size is not 64-bit, because the
+  // returndatacopy will trigger memory access error instead of out-of-gas
+  // when offset/size is is very large.
+  uint64_t Non64Value = std::numeric_limits<uint64_t>::max();
+  normalizeOperandU64(OffsetComponents, &Non64Value);
+  normalizeOperandU64(SizeComponents, &Non64Value);
 #ifdef ZEN_ENABLE_EVM_GAS_REGISTER
   syncGasToMemory();
 #endif

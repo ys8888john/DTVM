@@ -146,6 +146,8 @@ multi_vm/evm.delegatecall_then_oog/external_vm
 multi_vm/evm.eip2929_case2/external_vm
 multi_vm/evm.returndatacopy/external_vm
 multi_vm/evm.returndatacopy_empty/external_vm
+multi_vm/evm.returndatacopy_outofrange/external_vm
+multi_vm/evm.returndatacopy_outofrange_highbits/external_vm
 multi_vm/evm.returndatasize/external_vm
 multi_vm/evm.sstore_cost/external_vm
 multi_vm/evm.sstore_cost_legacy/external_vm

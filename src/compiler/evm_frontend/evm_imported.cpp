@@ -619,6 +619,15 @@ void evmSetExtCodeCopy(zen::runtime::EVMInstance *Instance,
 
 void evmSetReturnDataCopy(zen::runtime::EVMInstance *Instance,
                           uint64_t DestOffset, uint64_t Offset, uint64_t Size) {
+  const auto &ReturnData = Instance->getReturnData();
+  // Additional checks for add overflow
+  if (Offset > ReturnData.size() || Size > ReturnData.size() ||
+      Offset + Size > ReturnData.size()) {
+    Instance->setGas(0);
+    zen::runtime::EVMInstance::triggerInstanceExceptionOnJIT(
+        Instance, zen::common::ErrorCode::OutOfBoundsMemory);
+  }
+
   // When Size is 0, no memory operations are needed
   if (Size == 0) {
     return;
@@ -630,21 +639,11 @@ void evmSetReturnDataCopy(zen::runtime::EVMInstance *Instance,
     Instance->chargeGas(CopyGas);
   }
 
-  const auto &ReturnData = Instance->getReturnData();
   uint8_t *MemoryBase = Instance->getMemoryBase();
 
-  if (Offset >= ReturnData.size()) {
-    std::memset(MemoryBase + DestOffset, 0, Size);
-  } else {
-    uint64_t CopySize = std::min<uint64_t>(
-        Size, static_cast<uint64_t>(ReturnData.size()) - Offset);
-    std::memcpy(MemoryBase + DestOffset, ReturnData.data() + Offset, CopySize);
-
-    // Fill remaining bytes with zeros
-    if (Size > CopySize) {
-      std::memset(MemoryBase + DestOffset + CopySize, 0, Size - CopySize);
-    }
-  }
+  uint64_t CopySize = std::min<uint64_t>(
+      Size, static_cast<uint64_t>(ReturnData.size()) - Offset);
+  std::memcpy(MemoryBase + DestOffset, ReturnData.data() + Offset, CopySize);
 }
 
 void evmExpandMemoryNoGas(zen::runtime::EVMInstance *Instance,
