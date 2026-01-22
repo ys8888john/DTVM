@@ -321,8 +321,9 @@ void BaseInterpreter::interpret() {
 
   size_t CodeSize = Mod->CodeSize;
   Byte *Code = Mod->Code;
-  static const auto *MetricsTable =
-      evmc_get_instruction_metrics_table(DEFAULT_REVISION);
+  evmc_revision Revision = Context.getInstance()->getRevision();
+  const auto *MetricsTable = evmc_get_instruction_metrics_table(Revision);
+  const auto *NamesTable = evmc_get_instruction_names_table(Revision);
   const auto &Cache = Mod->getBytecodeCache();
   const uint8_t *__restrict JumpDestMap = Cache.JumpDestMap.data();
   const intx::uint256 *__restrict PushValueMap = Cache.PushValueMap.data();
@@ -348,6 +349,13 @@ void BaseInterpreter::interpret() {
         const Byte OpcodeByte = Code[Frame->Pc];
         const uint8_t OpcodeU8 = static_cast<uint8_t>(OpcodeByte);
         const evmc_opcode Op = static_cast<evmc_opcode>(OpcodeByte);
+
+        // EVMC does not have opcodes like MCOPY... in CANCUN
+        if (Revision < EVMC_CANCUN && NamesTable[Op] == NULL) {
+          // Undefined instruction
+          Context.setStatus(EVMC_UNDEFINED_INSTRUCTION);
+          break;
+        }
 
         switch (Op) {
         case evmc_opcode::OP_STOP: {
