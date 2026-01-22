@@ -250,6 +250,7 @@ ExecutionResult executeStateTest(const StateTestFixture &Fixture,
       InitialAccounts.push_back(Entry);
     }
     evmc_tx_context TxContext = Fixture.Environment;
+    TxContext.tx_origin = PT.Message->sender;
     if (!PT.BlobHashes.empty()) {
       TxContext.blob_hashes = PT.BlobHashes.data();
       TxContext.blob_hashes_count = PT.BlobHashes.size();
