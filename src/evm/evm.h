@@ -24,6 +24,9 @@ constexpr auto CALL_VALUE_COST = 9000;
 constexpr auto ACCOUNT_CREATION_COST = 25000;
 constexpr auto CALL_GAS_STIPEND = 2300;
 constexpr uint64_t LegacyModExpBaseGas = 600;
+constexpr auto EXP_BYTE_GAS = 50;
+constexpr auto EXP_BYTE_GAS_PRE_SPURIOUS_DRAGON = 10;
+
 /// The limit of the size of created contract
 /// defined by [EIP-170](https://eips.ethereum.org/EIPS/eip-170)
 constexpr auto MAX_CODE_SIZE = 0x6000;

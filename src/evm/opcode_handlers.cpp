@@ -64,7 +64,6 @@ DEFINE_CALCULATE_GAS(Sub, OP_SUB);
 DEFINE_CALCULATE_GAS(Mul, OP_MUL);
 DEFINE_CALCULATE_GAS(Div, OP_DIV);
 DEFINE_CALCULATE_GAS(Mod, OP_MOD);
-DEFINE_CALCULATE_GAS(Exp, OP_EXP);
 DEFINE_CALCULATE_GAS(SDiv, OP_SDIV);
 DEFINE_CALCULATE_GAS(SMod, OP_SMOD);
 
@@ -92,6 +91,7 @@ DEFINE_CALCULATE_GAS(Sgt, OP_SGT);
 DEFINE_NOT_TEMPLATE_CALCULATE_GAS(SignExtend, OP_SIGNEXTEND);
 DEFINE_NOT_TEMPLATE_CALCULATE_GAS(Byte, OP_BYTE);
 DEFINE_NOT_TEMPLATE_CALCULATE_GAS(Sar, OP_SAR);
+DEFINE_NOT_TEMPLATE_CALCULATE_GAS(Exp, OP_EXP);
 
 // Environmental information
 DEFINE_NOT_TEMPLATE_CALCULATE_GAS(Address, OP_ADDRESS);
@@ -348,6 +348,26 @@ void SarHandler::doExecute() {
   }
   Frame->push(Res);
 }
+
+void ExpHandler::doExecute() {
+  auto *Frame = getFrame();
+  auto *Context = getContext();
+  EVM_STACK_CHECK(Frame, 2);
+
+  auto &A = Frame->Stack[Frame->Sp - 1];
+  auto &B = Frame->Stack[Frame->Sp - 2];
+  uint64_t BytesNum = intx::count_significant_bytes(B);
+  uint64_t ByteGas = currentRevision() < EVMC_SPURIOUS_DRAGON
+                         ? EXP_BYTE_GAS_PRE_SPURIOUS_DRAGON
+                         : EXP_BYTE_GAS;
+  if (!chargeGas(Frame, BytesNum * ByteGas)) {
+    Context->setStatus(EVMC_OUT_OF_GAS);
+    return;
+  }
+  B = intx::exp(A, B);
+  --Frame->Sp;
+}
+
 // environmental information operations
 void AddressHandler::doExecute() {
   auto *Frame = getFrame();

@@ -200,3 +200,6 @@ multi_vm/evm.sload_cost_pre_tangerine_whistle/external_vm
 multi_vm/evm.staticcall_then_oog/external_vm
 multi_vm/evm.staticmode/external_vm
 multi_vm/evm.storage/external_vm
+multi_vm/evm.exp/external_vm
+multi_vm/evm.exp_oog/external_vm
+multi_vm/evm.exp_pre_spurious_dragon/external_vm

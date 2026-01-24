@@ -170,7 +170,6 @@ DEFINE_BINARY_OP(Sub, (A - B));
 DEFINE_BINARY_OP(Mul, (A * B));
 DEFINE_BINARY_OP(Div, ((B == 0) ? intx::uint256(0) : (A / B)));
 DEFINE_BINARY_OP(Mod, ((B == 0) ? intx::uint256(0) : A % B));
-DEFINE_BINARY_OP(Exp, intx::exp(A, B));
 DEFINE_BINARY_OP(SDiv,
                  ((B == 0) ? intx::uint256(0) : intx::sdivrem(A, B).quot));
 DEFINE_BINARY_OP(SMod, ((B == 0) ? intx::uint256(0) : intx::sdivrem(A, B).rem));
@@ -257,6 +256,7 @@ DEFINE_UNIMPLEMENT_HANDLER(SStore);
 DEFINE_UNIMPLEMENT_HANDLER(SignExtend);
 DEFINE_UNIMPLEMENT_HANDLER(Byte);
 DEFINE_UNIMPLEMENT_HANDLER(Sar);
+DEFINE_UNIMPLEMENT_HANDLER(Exp);
 
 // Memory operations
 DEFINE_UNIMPLEMENT_HANDLER(MStore);
