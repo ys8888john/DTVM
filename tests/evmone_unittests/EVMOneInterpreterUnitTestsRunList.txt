@@ -203,3 +203,4 @@ multi_vm/evm.storage/external_vm
 multi_vm/evm.exp/external_vm
 multi_vm/evm.exp_oog/external_vm
 multi_vm/evm.exp_pre_spurious_dragon/external_vm
+multi_vm/evm.shift_overflow/external_vm

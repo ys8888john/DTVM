@@ -344,7 +344,7 @@ void SarHandler::doExecute() {
     }
   } else {
     intx::uint256 IsNegative = (Value >> 255) & 1;
-    Res = IsNegative ? intx::uint256(-1) : intx::uint256(0);
+    Res = IsNegative ? ~intx::uint256(0) : intx::uint256(0);
   }
   Frame->push(Res);
 }
