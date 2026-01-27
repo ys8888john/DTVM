@@ -197,6 +197,9 @@ multi_vm/evm.returndatacopy_empty/external_vm
 multi_vm/evm.returndatacopy_outofrange/external_vm
 multi_vm/evm.returndatacopy_outofrange_highbits/external_vm
 multi_vm/evm.returndatasize/external_vm
+multi_vm/evm.selfdestruct/external_vm
+multi_vm/evm.selfdestruct_with_balance/external_vm
+multi_vm/evm.selfdestruct_gas_refund/external_vm
 multi_vm/evm.selfdestruct_no_gas_refund/external_vm
 multi_vm/evm.sload_cost_pre_tangerine_whistle/external_vm
 multi_vm/evm.staticcall_then_oog/external_vm

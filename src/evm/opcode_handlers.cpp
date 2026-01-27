@@ -1543,9 +1543,8 @@ void SelfDestructHandler::doExecute() {
   const auto Rev = currentRevision();
   // EIP-2929: charge cold account access cost if needed.
   if (Rev >= EVMC_BERLIN) {
-    const bool IsCold =
-        Frame->Host->access_account(Beneficiary) == EVMC_ACCESS_COLD;
-    if (IsCold && !chargeGas(Frame, COLD_ACCOUNT_ACCESS_COST)) {
+    if (Frame->Host->access_account(Beneficiary) == EVMC_ACCESS_COLD &&
+        !chargeGas(Frame, COLD_ACCOUNT_ACCESS_COST)) {
       Context->setStatus(EVMC_OUT_OF_GAS);
       return;
     }
@@ -1553,18 +1552,22 @@ void SelfDestructHandler::doExecute() {
 
   // EIP-161: if target account does not exist AND self has balance to transfer,
   // charge account creation cost.
-  if (Rev >= EVMC_SPURIOUS_DRAGON) {
-    evmc::bytes32 SelfBalance = Frame->Host->get_balance(Frame->Msg.recipient);
-    if (intx::be::load<intx::uint256>(SelfBalance) != 0 &&
-        !Frame->Host->account_exists(Beneficiary)) {
-      if (!chargeGas(Frame, ACCOUNT_CREATION_COST)) {
+  if (Rev >= EVMC_TANGERINE_WHISTLE) {
+    if (Rev == EVMC_TANGERINE_WHISTLE ||
+        Frame->Host->get_balance(Frame->Msg.recipient)) {
+      if (!Frame->Host->account_exists(Beneficiary) &&
+          !chargeGas(Frame, ACCOUNT_CREATION_COST)) {
         Context->setStatus(EVMC_OUT_OF_GAS);
         return;
       }
     }
   }
 
-  Frame->Host->selfdestruct(Frame->Msg.recipient, Beneficiary);
+  if (Frame->Host->selfdestruct(Frame->Msg.recipient, Beneficiary)) {
+    if (Rev < EVMC_LONDON) {
+      Context->getInstance()->addGasRefund(EXTRA_REFUND_BEFORE_LONDON);
+    }
+  }
 
   Context->setStatus(EVMC_SUCCESS);
   // Return remaining gas to parent frame before freeing current frame.

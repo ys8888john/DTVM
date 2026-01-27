@@ -23,6 +23,7 @@ constexpr auto ADDITIONAL_COLD_ACCOUNT_ACCESS_COST =
     COLD_ACCOUNT_ACCESS_COST - WARM_ACCOUNT_ACCESS_COST;
 constexpr auto CALL_VALUE_COST = 9000;
 constexpr auto ACCOUNT_CREATION_COST = 25000;
+constexpr auto EXTRA_REFUND_BEFORE_LONDON = 24000;
 constexpr auto CALL_GAS_STIPEND = 2300;
 constexpr uint64_t LegacyModExpBaseGas = 600;
 constexpr auto EXP_BYTE_GAS = 50;
