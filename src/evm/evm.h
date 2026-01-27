@@ -10,7 +10,8 @@ using namespace evmc::literals;
 constexpr auto MAXSTACK = 1024;
 
 // Limit required memory size to prevent excessive memory consumption
-constexpr uint64_t MAX_REQUIRED_MEMORY_SIZE = 1024 * 1024;
+// Ethereum EVM uses UINT32_MAX for memory size, with gas-based limiting
+constexpr uint64_t MAX_REQUIRED_MEMORY_SIZE = 16 * 1024 * 1024; // 16MB
 
 constexpr evmc_revision DEFAULT_REVISION = EVMC_CANCUN;
 
