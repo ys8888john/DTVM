@@ -20,7 +20,9 @@ multi_vm/evm.divmod/external_vm
 multi_vm/evm.div_by_zero/external_vm
 multi_vm/evm.mod_by_zero/external_vm
 multi_vm/evm.addmod_mulmod_by_zero/external_vm
+multi_vm/evm.signextend/external_vm
 multi_vm/evm.signextend_31/external_vm
+multi_vm/evm.signextend_fuzzing/external_vm
 multi_vm/evm.exp_1_0/external_vm
 multi_vm/evm.exp_0_0/external_vm
 multi_vm/evm.calldataload/external_vm

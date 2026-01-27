@@ -297,15 +297,16 @@ void SignExtendHandler::doExecute() {
 
     // Extract the sign bit
     bool SignBit = (V & (intx::uint256(1) << SignBitPosition)) != 0;
+    // Generate mask: lower I*8 bits are 0, the rest are 1
+    intx::uint256 Mask = (intx::uint256(1) << SignBitPosition) - 1;
 
     if (SignBit) {
-      // Generate mask: lower I*8 bits are 0, the rest are 1
-      intx::uint256 Mask = (intx::uint256(1) << SignBitPosition) - 1;
       // Apply mask: extend the sign bit to higher bits
       Res |= ~Mask;
+    } else {
+      // Apply mask: extend the sign bit to higher bits
+      Res &= Mask;
     }
-    // If the sign bit is 0, no processing is needed, keep the original
-    // value unchanged
   }
   Frame->push(Res);
 }
