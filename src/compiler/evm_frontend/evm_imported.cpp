@@ -565,6 +565,15 @@ void evmSetExtCodeCopy(zen::runtime::EVMInstance *Instance,
   const zen::runtime::EVMModule *Module = Instance->getModule();
   ZEN_ASSERT(Module && Module->Host);
   evmc::address Addr = loadAddressFromLE(Address);
+
+  if (!Instance->expandMemoryChecked(DestOffset, Size)) {
+    return;
+  }
+
+  if (uint64_t CopyGas = calculateWordCopyGas(Size)) {
+    Instance->chargeGas(CopyGas);
+  }
+
   evmc_revision Rev = Instance->getRevision();
   if (Rev >= EVMC_BERLIN &&
       Module->Host->access_account(Addr) == EVMC_ACCESS_COLD) {
@@ -576,29 +585,15 @@ void evmSetExtCodeCopy(zen::runtime::EVMInstance *Instance,
     return;
   }
 
-  if (!Instance->expandMemoryChecked(DestOffset, Size)) {
-    return;
-  }
-  if (uint64_t CopyGas = calculateWordCopyGas(Size)) {
-    Instance->chargeGas(CopyGas);
-  }
-
   uint8_t *MemoryBase = Instance->getMemoryBase();
-  size_t CodeSize = Module->Host->get_code_size(Addr);
+  constexpr auto MaxBufferSize = std::numeric_limits<uint32_t>::max();
+  Offset = (MaxBufferSize < Offset) ? MaxBufferSize : Offset;
+  size_t CopiedSize =
+      Module->Host->copy_code(Addr, Offset, MemoryBase + DestOffset, Size);
 
-  if (Offset >= CodeSize) {
-    // If offset is beyond code size, fill with zeros
-    std::memset(MemoryBase + DestOffset, 0, Size);
-  } else {
-    uint64_t CopySize =
-        std::min<uint64_t>(Size, static_cast<uint64_t>(CodeSize) - Offset);
-    size_t CopiedSize = Module->Host->copy_code(
-        Addr, Offset, MemoryBase + DestOffset, CopySize);
-
-    // Fill remaining bytes with zeros if needed
-    if (Size > CopiedSize) {
-      std::memset(MemoryBase + DestOffset + CopiedSize, 0, Size - CopiedSize);
-    }
+  // Fill remaining bytes with zeros if needed
+  if (Size > CopiedSize) {
+    std::memset(MemoryBase + DestOffset + CopiedSize, 0, Size - CopiedSize);
   }
 }
 
