@@ -196,3 +196,6 @@ multi_vm/evm.selfdestruct_no_gas_refund/external_vm
 multi_vm/evm.selfdestruct/external_vm
 multi_vm/evm.selfdestruct_with_balance/external_vm
 multi_vm/evm.selfdestruct_gas_refund/external_vm
+multi_vm/evm.extcode/external_vm
+multi_vm/evm.extcodecopy_nonzero_index/external_vm
+multi_vm/evm.extcodecopy_fill_tail/external_vm
