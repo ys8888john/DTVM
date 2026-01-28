@@ -18,7 +18,7 @@ namespace {
 constexpr bool DEBUG = true;
 constexpr bool PRINT_FAILURE_DETAILS = true;
 // TODO: RunMode selection logic will be refactored in the future.
-constexpr auto STATE_TEST_RUN_MODE = common::RunMode::InterpMode;
+constexpr auto STATE_TEST_RUN_MODE = common::RunMode::MultipassMode;
 
 struct TxIntrinsicCost {
   int64_t Intrinsic = 0;
@@ -204,6 +204,15 @@ ExecutionResult executeStateTest(const StateTestFixture &Fixture,
     const int64_t ExecutionGasLimit = TxGasLimit - IntrinsicCost.Intrinsic;
     PT.Message->gas = ExecutionGasLimit;
 
+    const evmc::address &PrecompileAddr =
+        (PT.Message->kind == EVMC_CALLCODE ||
+         PT.Message->kind == EVMC_DELEGATECALL)
+            ? PT.Message->code_address
+            : PT.Message->recipient;
+    const bool IsPrecompile =
+        precompile::isModExpPrecompile(PrecompileAddr) ||
+        precompile::isBlake2bPrecompile(PrecompileAddr, Revision);
+
     // Find the target account (contract to call)
     const ParsedAccount *TargetAccount = nullptr;
     for (const auto &PA : Fixture.PreState) {
@@ -213,7 +222,7 @@ ExecutionResult executeStateTest(const StateTestFixture &Fixture,
       }
     }
 
-    if (!TargetAccount && !IsCreateTx) {
+    if (!TargetAccount && !IsCreateTx && !IsPrecompile) {
       if (!ExpectedResult.ExpectedException.empty()) {
         return {true, {}};
       }
@@ -229,7 +238,7 @@ ExecutionResult executeStateTest(const StateTestFixture &Fixture,
     }
 
     // Skip if no code to execute
-    if (!IsCreateTx && TargetAccount->Account.code.empty()) {
+    if (!IsCreateTx && !IsPrecompile && TargetAccount->Account.code.empty()) {
       if (DEBUG) {
         std::cout << "No code to execute for test: " << Fixture.TestName
                   << std::endl;
@@ -275,6 +284,9 @@ ExecutionResult executeStateTest(const StateTestFixture &Fixture,
     if (IsCreateTx) {
       ExecConfig.Bytecode = PT.CallData.data();
       ExecConfig.BytecodeSize = PT.CallData.size();
+    } else if (IsPrecompile) {
+      ExecConfig.Bytecode = nullptr;
+      ExecConfig.BytecodeSize = 0;
     } else {
       ExecConfig.Bytecode = TargetAccount->Account.code.data();
       ExecConfig.BytecodeSize = TargetAccount->Account.code.size();

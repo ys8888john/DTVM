@@ -109,15 +109,24 @@ public:
       Result.ErrorMessage = "Runtime is not attached to ZenMockedEVMHost";
       return Result;
     }
+    const evmc_revision ActiveRevision = Config.Revision;
     const bool IsCreateTx = Config.Message.kind == EVMC_CREATE ||
                             Config.Message.kind == EVMC_CREATE2;
-    if ((!Config.Bytecode || Config.BytecodeSize == 0) && !IsCreateTx) {
+    const evmc::address &PrecompileAddr =
+        (Config.Message.kind == EVMC_CALLCODE ||
+         Config.Message.kind == EVMC_DELEGATECALL)
+            ? Config.Message.code_address
+            : Config.Message.recipient;
+    const bool IsPrecompile =
+        precompile::isModExpPrecompile(PrecompileAddr) ||
+        precompile::isBlake2bPrecompile(PrecompileAddr, ActiveRevision);
+    if ((!Config.Bytecode || Config.BytecodeSize == 0) && !IsCreateTx &&
+        !IsPrecompile) {
       Result.ErrorMessage = "Bytecode buffer is empty";
       return Result;
     }
 
     uint64_t GasLimit = Config.GasLimit;
-    const evmc_revision ActiveRevision = Config.Revision;
     Revision = ActiveRevision;
     CreatedInTx.clear();
     PendingSelfdestructs.clear();
@@ -182,6 +191,58 @@ public:
     FeesPrepaidInTx = FeesPrepaid;
     if (FeesPrepaid &&
         !prepayGasAndBlobFees(TotalGasLimit, Config, Msg, Result)) {
+      return Result;
+    }
+
+    if (!IsCreateTx && IsPrecompile) {
+      auto StateSnapshot = captureHostState();
+      if (!applyPreExecutionState(Msg, Result)) {
+        restoreHostState(StateSnapshot);
+        return Result;
+      }
+
+      evmc::Result PrecompileResult = call(Msg);
+      if (shouldRevertState(PrecompileResult.status_code)) {
+        restoreHostState(StateSnapshot);
+        auto &SenderAccount = accounts[Msg.sender];
+        ensureAccountHasCodeHash(SenderAccount);
+        SenderAccount.nonce++;
+      }
+
+      Result.Status = PrecompileResult.status_code;
+      Result.Success = true;
+      Result.RemainingGas = PrecompileResult.gas_left;
+      if (PrecompileResult.output_data && PrecompileResult.output_size > 0) {
+        ReturnData.assign(PrecompileResult.output_data,
+                          PrecompileResult.output_data +
+                              PrecompileResult.output_size);
+      } else {
+        ReturnData.clear();
+      }
+
+      Result.GasUsed =
+          AvailableGas > static_cast<uint64_t>(Result.RemainingGas)
+              ? AvailableGas - static_cast<uint64_t>(Result.RemainingGas)
+              : 0;
+      Result.GasUsed += Config.IntrinsicGas;
+      if (FeesPrepaidInTx && CallStipendRefund != 0) {
+        Result.GasUsed = Result.GasUsed > CallStipendRefund
+                             ? Result.GasUsed - CallStipendRefund
+                             : 0;
+      }
+      uint64_t GasRefund = static_cast<uint64_t>(
+          std::max<int64_t>(0, PrecompileResult.gas_refund));
+      uint64_t RefundLimit = Result.GasUsed / 5;
+      Result.GasRefund = std::min(GasRefund, RefundLimit);
+      Result.GasCharged =
+          Result.GasUsed > Result.GasRefund ? Result.GasUsed - Result.GasRefund
+                                            : 0;
+
+      if (Result.GasCharged != 0) {
+        settleGasCharges(Result.GasCharged, TotalGasLimit, Config, Msg, Result,
+                         FeesPrepaid);
+      }
+      finalizeSelfdestructs();
       return Result;
     }
 

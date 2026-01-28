@@ -360,6 +360,7 @@ void BaseInterpreter::interpret() {
         switch (Op) {
         case evmc_opcode::OP_STOP: {
           const uint64_t RemainingGas = Frame->Msg.gas;
+          Context.setReturnData(std::vector<uint8_t>());
           Context.freeBackFrame();
           Frame = Context.getCurFrame();
           if (!Frame) {
@@ -759,6 +760,7 @@ void BaseInterpreter::interpret() {
 
     switch (Op) {
     case evmc_opcode::OP_STOP:
+      Context.setReturnData(std::vector<uint8_t>());
       Context.freeBackFrame();
       Frame = Context.getCurFrame();
       if (!Frame) {
