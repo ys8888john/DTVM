@@ -209,3 +209,7 @@ multi_vm/evm.exp/external_vm
 multi_vm/evm.exp_oog/external_vm
 multi_vm/evm.exp_pre_spurious_dragon/external_vm
 multi_vm/evm.shift_overflow/external_vm
+multi_vm/evm.eip2929_case2/external_vm
+multi_vm/evm.extcode/external_vm
+multi_vm/evm.extcodecopy_nonzero_index/external_vm
+multi_vm/evm.extcodecopy_fill_tail/external_vm

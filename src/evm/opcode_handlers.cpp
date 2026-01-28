@@ -597,18 +597,10 @@ void ExtCodeCopyHandler::doExecute() {
     Frame->Msg.gas -= ADDITIONAL_COLD_ACCOUNT_ACCESS_COST;
   }
 
-  size_t CodeSize = Frame->Host->get_code_size(Addr);
-
-  if (Offset >= CodeSize) {
-    // If Offset is beyond the code size, fill with zeros
-    if (Size > 0) {
-      std::memset(Frame->Memory.data() + DestOffset, 0, Size);
-    }
-  } else {
+  if (Size > 0) {
     // Copy code to memory
-    auto CopySize = std::min(Size, CodeSize - Offset);
     size_t CopiedSize = Frame->Host->copy_code(
-        Addr, Offset, Frame->Memory.data() + DestOffset, CopySize);
+        Addr, Offset, Frame->Memory.data() + DestOffset, Size);
     if (CopiedSize < Size) {
       // If the copied size is less than requested, fill the rest with zeros
       std::memset(Frame->Memory.data() + DestOffset + CopiedSize, 0,
