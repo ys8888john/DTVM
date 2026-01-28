@@ -45,6 +45,8 @@ private:
       PrewarmStorageKeys;
   std::unordered_set<evmc::address> CreatedInTx;
   std::unordered_set<evmc::address> PendingSelfdestructs;
+  uint64_t CallStipendRefund = 0;
+  bool FeesPrepaidInTx = false;
 
 public:
   struct AccountInitEntry {
@@ -119,6 +121,8 @@ public:
     Revision = ActiveRevision;
     CreatedInTx.clear();
     PendingSelfdestructs.clear();
+    CallStipendRefund = 0;
+    FeesPrepaidInTx = false;
     if (GasLimit == 0) {
       if (Config.Message.gas < 0) {
         Result.ErrorMessage = "Invalid gas provided in message";
@@ -164,6 +168,23 @@ public:
       }
     }
 
+    uint64_t TotalGasLimit = GasLimit;
+    if (Config.IntrinsicGas > 0) {
+      if (TotalGasLimit >
+          std::numeric_limits<uint64_t>::max() - Config.IntrinsicGas) {
+        Result.ErrorMessage = "Gas limit overflow detected";
+        return Result;
+      }
+      TotalGasLimit += Config.IntrinsicGas;
+    }
+    const bool FeesPrepaid =
+        Config.MaxFeePerBlobGas && tx_context.blob_hashes_count > 0;
+    FeesPrepaidInTx = FeesPrepaid;
+    if (FeesPrepaid &&
+        !prepayGasAndBlobFees(TotalGasLimit, Config, Msg, Result)) {
+      return Result;
+    }
+
     if (IsCreateTx) {
       auto SenderIt = accounts.find(Msg.sender);
       uint64_t SenderNonceBefore =
@@ -185,6 +206,11 @@ public:
                                   : 0;
       Result.GasUsed = AvailableGas > GasLeft ? AvailableGas - GasLeft : 0;
       Result.GasUsed += Config.IntrinsicGas;
+      if (FeesPrepaidInTx && CallStipendRefund != 0) {
+        Result.GasUsed = Result.GasUsed > CallStipendRefund
+                             ? Result.GasUsed - CallStipendRefund
+                             : 0;
+      }
       uint64_t GasRefund = static_cast<uint64_t>(
           std::max<int64_t>(0, CreateResult.gas_refund));
       uint64_t RefundLimit = Result.GasUsed / 5;
@@ -193,7 +219,8 @@ public:
           Result.GasUsed > Result.GasRefund ? Result.GasUsed - Result.GasRefund
                                             : 0;
       if (Result.GasCharged != 0) {
-        settleGasCharges(Result.GasCharged, Config, Msg, Result);
+        settleGasCharges(Result.GasCharged, TotalGasLimit, Config, Msg, Result,
+                         FeesPrepaid);
       }
       SenderIt = accounts.find(Msg.sender);
       if (SenderIt != accounts.end()) {
@@ -287,6 +314,11 @@ public:
             : 0;
 
     Result.GasUsed += Config.IntrinsicGas;
+    if (FeesPrepaidInTx && CallStipendRefund != 0) {
+      Result.GasUsed = Result.GasUsed > CallStipendRefund
+                           ? Result.GasUsed - CallStipendRefund
+                           : 0;
+    }
 
     uint64_t GasRefund =
         static_cast<uint64_t>(std::max<int64_t>(0, Inst->getGasRefund()));
@@ -297,7 +329,8 @@ public:
                                           : 0;
 
     if (Result.GasCharged != 0) {
-      settleGasCharges(Result.GasCharged, Config, Msg, Result);
+      settleGasCharges(Result.GasCharged, TotalGasLimit, Config, Msg, Result,
+                       FeesPrepaid);
     }
 
     finalizeSelfdestructs();
@@ -395,6 +428,11 @@ public:
           evmc::hex(evmc::bytes_view(CodeAddr.bytes, 20)).c_str());
       if (Msg.kind == EVMC_CALL && !applyCallValueTransfer(Msg)) {
         return ParentResult;
+      }
+      if (FeesPrepaidInTx && Msg.kind == EVMC_CALL &&
+          toUint256Bytes(Msg.value) != intx::uint256{0} &&
+          ParentResult.status_code == EVMC_SUCCESS) {
+        CallStipendRefund += CALL_GAS_STIPEND;
       }
       if (ParentResult.status_code == EVMC_SUCCESS &&
           ParentResult.gas_left == 0) {
@@ -911,10 +949,10 @@ private:
     return true;
   }
 
-  void settleGasCharges(uint64_t GasCharged,
-                        const TransactionExecutionConfig &Config,
-                        const evmc_message &Msg,
-                        TransactionExecutionResult &Result) {
+  bool prepayGasAndBlobFees(uint64_t GasLimit,
+                            const TransactionExecutionConfig &Config,
+                            const evmc_message &Msg,
+                            TransactionExecutionResult &Result) {
     intx::uint256 GasPrice = toUint256BE(tx_context.tx_gas_price);
     intx::uint256 BaseFee = toUint256BE(tx_context.block_base_fee);
     intx::uint256 PriorityFee =
@@ -931,9 +969,8 @@ private:
       EffectiveGasPrice = BaseFee + PriorityFee;
     }
 
-    intx::uint256 GasCharged256 = intx::uint256(GasCharged);
-    intx::uint256 TotalGasCost = GasCharged256 * EffectiveGasPrice;
-    intx::uint256 CoinbaseReward = GasCharged256 * PriorityFee;
+    intx::uint256 UpfrontGasCost =
+        intx::uint256(GasLimit) * EffectiveGasPrice;
     intx::uint256 BlobFee = 0;
     if (Config.MaxFeePerBlobGas && tx_context.blob_hashes_count > 0) {
       constexpr uint64_t BlobGasPerBlob = 131072;
@@ -951,14 +988,80 @@ private:
     auto &SenderAccount = accounts[Msg.sender];
     ensureAccountHasCodeHash(SenderAccount);
     intx::uint256 SenderBalance = toUint256Bytes(SenderAccount.balance);
-    const intx::uint256 TotalCost = TotalGasCost + BlobFee;
+    const intx::uint256 TotalCost = UpfrontGasCost + BlobFee;
     if (SenderBalance < TotalCost) {
       Result.Success = false;
-      Result.ErrorMessage = "Sender balance insufficient for gas settlement";
-      return;
+      Result.Status = EVMC_INSUFFICIENT_BALANCE;
+      Result.ErrorMessage = "Sender balance insufficient for upfront gas";
+      return false;
     }
     SenderBalance -= TotalCost;
     SenderAccount.balance = toBytes32(SenderBalance);
+    return true;
+  }
+
+  void settleGasCharges(uint64_t GasCharged,
+                        uint64_t GasLimit,
+                        const TransactionExecutionConfig &Config,
+                        const evmc_message &Msg,
+                        TransactionExecutionResult &Result,
+                        bool FeesPrepaid) {
+    intx::uint256 GasPrice = toUint256BE(tx_context.tx_gas_price);
+    intx::uint256 BaseFee = toUint256BE(tx_context.block_base_fee);
+    intx::uint256 PriorityFee =
+        GasPrice > BaseFee ? GasPrice - BaseFee : intx::uint256{0};
+    intx::uint256 EffectiveGasPrice = GasPrice;
+
+    if (Config.MaxPriorityFeePerGas) {
+      intx::uint256 MaxPriority =
+          toUint256BE(*Config.MaxPriorityFeePerGas);
+      intx::uint256 MaxFeeMinusBase =
+          GasPrice > BaseFee ? GasPrice - BaseFee : intx::uint256{0};
+      PriorityFee =
+          MaxPriority < MaxFeeMinusBase ? MaxPriority : MaxFeeMinusBase;
+      EffectiveGasPrice = BaseFee + PriorityFee;
+    }
+
+    intx::uint256 GasCharged256 = intx::uint256(GasCharged);
+    intx::uint256 CoinbaseReward = GasCharged256 * PriorityFee;
+    if (FeesPrepaid) {
+      if (GasLimit > GasCharged) {
+        intx::uint256 Refund =
+            intx::uint256(GasLimit - GasCharged) * EffectiveGasPrice;
+        auto &SenderAccount = accounts[Msg.sender];
+        ensureAccountHasCodeHash(SenderAccount);
+        intx::uint256 SenderBalance = toUint256Bytes(SenderAccount.balance);
+        SenderBalance += Refund;
+        SenderAccount.balance = toBytes32(SenderBalance);
+      }
+    } else {
+      intx::uint256 TotalGasCost = GasCharged256 * EffectiveGasPrice;
+      intx::uint256 BlobFee = 0;
+      if (Config.MaxFeePerBlobGas && tx_context.blob_hashes_count > 0) {
+        constexpr uint64_t BlobGasPerBlob = 131072;
+        intx::uint256 BlobBaseFee = toUint256BE(tx_context.blob_base_fee);
+        intx::uint256 MaxFeePerBlobGas =
+            toUint256BE(*Config.MaxFeePerBlobGas);
+        intx::uint256 EffectiveBlobFee =
+            BlobBaseFee <= MaxFeePerBlobGas ? BlobBaseFee : MaxFeePerBlobGas;
+        intx::uint256 BlobGasUsed =
+            intx::uint256(tx_context.blob_hashes_count) *
+            intx::uint256(BlobGasPerBlob);
+        BlobFee = BlobGasUsed * EffectiveBlobFee;
+      }
+
+      auto &SenderAccount = accounts[Msg.sender];
+      ensureAccountHasCodeHash(SenderAccount);
+      intx::uint256 SenderBalance = toUint256Bytes(SenderAccount.balance);
+      const intx::uint256 TotalCost = TotalGasCost + BlobFee;
+      if (SenderBalance < TotalCost) {
+        Result.Success = false;
+        Result.ErrorMessage = "Sender balance insufficient for gas settlement";
+        return;
+      }
+      SenderBalance -= TotalCost;
+      SenderAccount.balance = toBytes32(SenderBalance);
+    }
 
     if (CoinbaseReward != 0 ||
         accounts.find(tx_context.block_coinbase) != accounts.end()) {
