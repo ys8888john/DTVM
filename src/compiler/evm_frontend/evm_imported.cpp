@@ -227,31 +227,16 @@ const intx::uint256 *evmGetMulMod(zen::runtime::EVMInstance *Instance,
 const intx::uint256 *evmGetExp(zen::runtime::EVMInstance *Instance,
                                const intx::uint256 &Base,
                                const intx::uint256 &Exponent) {
-  // Handle edge cases
-  if (Exponent == 0) {
-    return storeUint256Result(intx::uint256{1});
-  }
-  if (Base == 0) {
-    return storeUint256Result(intx::uint256{0});
-  }
-  if (Exponent == 1) {
-    return storeUint256Result(Base);
-  }
+  // EIP-160: 50 gas per byte of exponent (pre-Spurious Dragon is cheaper).
+  const uint64_t ExponentByteSize = intx::count_significant_bytes(Exponent);
+  const auto Rev = Instance->getRevision();
+  const uint64_t GasPerByte = Rev < EVMC_SPURIOUS_DRAGON
+                                  ? zen::evm::EXP_BYTE_GAS_PRE_SPURIOUS_DRAGON
+                                  : zen::evm::EXP_BYTE_GAS;
+  Instance->chargeGas(ExponentByteSize * GasPerByte);
 
   // EVM: (Base ^ Exponent) % (2^256)
-  intx::uint256 Result = 1;
-  intx::uint256 CurrentBase = Base;
-  intx::uint256 ExponentCopy = Exponent;
-
-  while (ExponentCopy > 0) {
-    if (ExponentCopy & 1) {
-      Result *= CurrentBase;
-    }
-    CurrentBase *= CurrentBase;
-    ExponentCopy >>= 1;
-  }
-
-  return storeUint256Result(Result);
+  return storeUint256Result(intx::exp(Base, Exponent));
 }
 
 const uint8_t *evmGetAddress(zen::runtime::EVMInstance *Instance) {
@@ -675,6 +660,10 @@ static void evmEmitLogGeneric(zen::runtime::EVMInstance *Instance,
   if (Size > 0) {
     if (!Instance->expandMemoryChecked(Offset, Size)) {
       return;
+    }
+    const uint64_t LogDataCost = 8 * Size;
+    if (LogDataCost != 0) {
+      Instance->chargeGas(LogDataCost);
     }
     uint8_t *MemoryBase = Instance->getMemoryBase();
     Data = MemoryBase + Offset;
