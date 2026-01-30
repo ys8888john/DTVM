@@ -18,6 +18,9 @@ constexpr auto WORD_COPY_COST = 3;
 // Applied from EVMC_TANGERINE_WHISTLE through EVMC_ISTANBUL versions
 constexpr auto DELEGATECALL_EXTRA_GAS_TW_TO_ISTANBUL = 600;
 
+// OOG if gas is less than or equal 2300 (since Istanbul fork)
+constexpr auto SSTORE_REQUIRED_ISTANBUL = 2300;
+
 struct StorageStoreCost {
   int16_t GasCost;
   int16_t GasReFund;

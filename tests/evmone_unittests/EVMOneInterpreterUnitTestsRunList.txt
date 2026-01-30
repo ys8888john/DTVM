@@ -87,6 +87,7 @@ multi_vm/evm.eip2929_extcodehash_oog/external_vm
 multi_vm/evm.eip2929_sload_cold/external_vm
 multi_vm/evm.eip2929_sload_two_slots/external_vm
 multi_vm/evm.eip2929_sload_warm/external_vm
+multi_vm/evm.eip2929_sstore_modify_cold/external_vm
 multi_vm/evm.eip2929_delegatecall_cold/external_vm
 multi_vm/evm.basefee_nominal_case/external_vm
 multi_vm/evm.push0/external_vm
@@ -124,6 +125,7 @@ multi_vm/evm.sstore_out_of_block_gas/external_vm
 multi_vm/evm.sstore_cost/external_vm
 multi_vm/evm.sstore_cost_legacy/external_vm
 multi_vm/evm.sstore_cost_net_gas_metering/external_vm
+multi_vm/evm.sstore_below_stipend/external_vm
 multi_vm/evm.evmone_loaded_program_relocation/external_vm
 multi_vm/evm.jumpdest_with_high_offset/external_vm
 multi_vm/evm.grow_memory_with_mload/external_vm

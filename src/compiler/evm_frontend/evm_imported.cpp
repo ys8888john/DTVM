@@ -1142,7 +1142,12 @@ void evmSetSStore(zen::runtime::EVMInstance *Instance,
     return;
   }
   const evmc_message *Msg = Instance->getCurrentMessage();
-  evmc_revision Rev = Instance->getRevision();
+  const evmc_revision Rev = Instance->getRevision();
+  if (Rev >= EVMC_ISTANBUL &&
+      Instance->getGas() <= zen::evm::SSTORE_REQUIRED_ISTANBUL) {
+    zen::runtime::EVMInstance::triggerInstanceExceptionOnJIT(
+        Instance, zen::common::ErrorCode::GasLimitExceeded);
+  }
   const auto Key = intx::be::store<evmc::bytes32>(Index);
   const auto Val = intx::be::store<evmc::bytes32>(Value);
 
@@ -1157,10 +1162,6 @@ void evmSetSStore(zen::runtime::EVMInstance *Instance,
   const auto [GasCostWarm, GasReFund] = zen::evm::SSTORE_COSTS[Rev][Status];
 
   const auto GasCost = GasCostCold + GasCostWarm;
-  if ((uint64_t)GasCost > Instance->getGas()) {
-    zen::runtime::EVMInstance::triggerInstanceExceptionOnJIT(
-        Instance, zen::common::ErrorCode::GasLimitExceeded);
-  }
   Instance->chargeGas(GasCost);
   Instance->addGasRefund(GasReFund);
 }

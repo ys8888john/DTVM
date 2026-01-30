@@ -786,11 +786,16 @@ void SStoreHandler::doExecute() {
   EVM_FRAME_CHECK(Frame);
   EVM_SET_EXCEPTION_UNLESS(!Frame->isStaticMode(), EVMC_STATIC_MODE_VIOLATION);
 
+  const auto Rev = currentRevision();
+  if (Rev >= EVMC_ISTANBUL && Frame->Msg.gas <= SSTORE_REQUIRED_ISTANBUL) {
+    getContext()->setStatus(EVMC_OUT_OF_GAS);
+    return;
+  }
+
   EVM_STACK_CHECK(Frame, 2);
   const auto Key = intx::be::store<evmc::bytes32>(Frame->pop());
   const auto Value = intx::be::store<evmc::bytes32>(Frame->pop());
 
-  const auto Rev = currentRevision();
   const auto GasCostCold =
       (Rev >= EVMC_BERLIN && Frame->Host->access_storage(
                                  Frame->Msg.recipient, Key) == EVMC_ACCESS_COLD)
@@ -803,12 +808,10 @@ void SStoreHandler::doExecute() {
   const auto [GasCostWarm, GasReFund] = SSTORE_COSTS[Rev][Status];
 
   const auto GasCost = GasCostCold + GasCostWarm;
-  if (Frame->Msg.gas < GasCost) {
-    Frame->Host->set_storage(Frame->Msg.recipient, Key, PrevValue);
-    Context->setStatus(EVMC_OUT_OF_GAS);
+  if (!chargeGas(Frame, GasCost)) {
+    getContext()->setStatus(EVMC_OUT_OF_GAS);
     return;
   }
-  Frame->Msg.gas -= GasCost;
 
   // Track refund at Instance level (consolidate all gas refund tracking there)
   Context->getInstance()->addGasRefund(GasReFund);
