@@ -177,18 +177,8 @@ const intx::uint256 *evmGetSMod(zen::runtime::EVMInstance *Instance,
     return storeUint256Result(intx::uint256{0});
   }
 
-  // Check if dividend is negative (MSB set)
-  bool isDividendNegative = (Dividend >> 255) != 0;
-
-  // Convert to absolute values
-  intx::uint256 absDividend = isDividendNegative ? (~Dividend + 1) : Dividend;
-  intx::uint256 absDivisor = Divisor; // Divisor sign doesn't affect modulo
-
-  // Perform unsigned modulo
-  intx::uint256 absResult = absDividend % absDivisor;
-
-  // Apply sign: result has same sign as dividend
-  return storeUint256Result(isDividendNegative ? (~absResult + 1) : absResult);
+  intx::uint256 Result = intx::sdivrem(Dividend, Divisor).rem;
+  return storeUint256Result(Result);
 }
 
 const intx::uint256 *evmGetAddMod(zen::runtime::EVMInstance *Instance,

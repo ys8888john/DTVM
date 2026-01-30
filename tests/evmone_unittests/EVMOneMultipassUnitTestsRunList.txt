@@ -3,6 +3,7 @@ multi_vm/evm.push_and_pop/external_vm
 multi_vm/evm.push_implicit_data/external_vm
 multi_vm/evm.stack_underflow/external_vm
 multi_vm/evm.add/external_vm
+multi_vm/evm.arith/external_vm
 multi_vm/evm.dup/external_vm
 multi_vm/evm.dup_all_1/external_vm
 multi_vm/evm.dup_stack_overflow/external_vm
