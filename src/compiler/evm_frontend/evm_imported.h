@@ -132,6 +132,7 @@ struct RuntimeFunctions {
   VoidFn HandleUndefined;
   VoidWithBytes32Fn HandleSelfDestruct;
   Bytes32WithUInt64UInt64Fn GetKeccak256;
+  U256WithU256Fn GetClz;
 };
 
 const RuntimeFunctions &getRuntimeFunctionTable();
@@ -259,6 +260,8 @@ void evmSetTStore(zen::runtime::EVMInstance *Instance,
                   const intx::uint256 &Index, const intx::uint256 &Value);
 void evmHandleSelfDestruct(zen::runtime::EVMInstance *Instance,
                            const uint8_t *Beneficiary);
+const intx::uint256 *evmGetClz(zen::runtime::EVMInstance *Instance,
+                               const intx::uint256 &Value);
 } // namespace COMPILER
 
 #endif // EVM_FRONTEND_EVM_IMPORTED_H

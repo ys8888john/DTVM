@@ -319,6 +319,8 @@ public:
 
   Operand handleNot(const Operand &LHSOp);
 
+  Operand handleClz(const Operand &ValueOp);
+
   Operand handleByte(Operand IndexOp, Operand ValueOp);
 
   Operand handleSignextend(Operand IndexOp, Operand ValueOp);

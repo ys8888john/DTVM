@@ -158,7 +158,8 @@ public:
 #ifdef ZEN_ENABLE_EVM
   /// \warning not thread-safe
   common::MayBe<EVMModule *>
-  loadEVMModule(const std::string &Filename) noexcept;
+  loadEVMModule(const std::string &Filename,
+                evmc_revision Rev = zen::evm::DEFAULT_REVISION) noexcept;
 
   /// \warning not thread-safe
   common::MayBe<EVMModule *>

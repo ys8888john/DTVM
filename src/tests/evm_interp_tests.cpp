@@ -186,6 +186,7 @@ TEST_P(EVMSampleTest, ExecuteSample) {
   auto InstRet = Iso->createEVMInstance(*Mod, ExecutionGasLimit);
   ASSERT_TRUE(Iso) << "Failed to create Instance: " << FilePath;
   EVMInstance *Inst = *InstRet;
+  Inst->setRevision(evmc_revision::EVMC_OSAKA);
 
   InterpreterExecContext Ctx(Inst);
 

@@ -155,7 +155,8 @@ class TestRunner:
         cmd = [
             self.runtime_path,
             "--format", self.args.format,
-            "-m", self.args.mode
+            "-m", self.args.mode,
+            "--evm-revision", "osaka"
         ]
 
         if self.args.enable_multipass_lazy:

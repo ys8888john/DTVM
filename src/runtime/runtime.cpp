@@ -228,8 +228,8 @@ Module *Runtime::loadModule(WASMSymbol Name, CodeHolderUniquePtr CodeHolder,
 }
 
 #ifdef ZEN_ENABLE_EVM
-MayBe<EVMModule *>
-Runtime::loadEVMModule(const std::string &Filename) noexcept {
+MayBe<EVMModule *> Runtime::loadEVMModule(const std::string &Filename,
+                                          evmc_revision Rev) noexcept {
   if (Filename.empty()) {
     return getError(ErrorCode::InvalidFilePath);
   }
@@ -261,7 +261,7 @@ Runtime::loadEVMModule(const std::string &Filename) noexcept {
     // Create CodeHolder with decoded bytes
     auto Code = CodeHolder::newRawDataCodeHolder(*this, DecodedBytes->data(),
                                                  DecodedBytes->size());
-    return loadEVMModule(Name, std::move(Code), zen::evm::DEFAULT_REVISION);
+    return loadEVMModule(Name, std::move(Code), Rev);
   } catch (const Error &Err) {
     Stats.clearAllTimers();
     freeSymbol(Name);

@@ -117,7 +117,8 @@ const RuntimeFunctions &getRuntimeFunctionTable() {
       .HandleInvalid = &evmHandleInvalid,
       .HandleUndefined = &evmHandleUndefined,
       .HandleSelfDestruct = &evmHandleSelfDestruct,
-      .GetKeccak256 = &evmGetKeccak256};
+      .GetKeccak256 = &evmGetKeccak256,
+      .GetClz = &evmGetClz};
   return Table;
 }
 
@@ -1239,5 +1240,13 @@ void evmHandleSelfDestruct(zen::runtime::EVMInstance *Instance,
     Instance->setExeResult(std::move(ExeResult));
     Instance->exit(0);
   }
+}
+
+const intx::uint256 *evmGetClz(zen::runtime::EVMInstance *Instance,
+                               const intx::uint256 &Value) {
+  uint64_t clzResult = intx::clz(Value);
+  intx::uint256 result;
+  result[0] = clzResult;
+  return storeUint256Result(result);
 }
 } // namespace COMPILER

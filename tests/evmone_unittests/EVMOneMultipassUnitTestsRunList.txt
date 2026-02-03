@@ -161,7 +161,9 @@ multi_vm/evm.blobhash_invalid_hash_version/external_vm
 multi_vm/evm.blobhash_one/external_vm
 multi_vm/evm.blobhash_two/external_vm
 multi_vm/evm.callf_undefined/external_vm
-multi_vm/evm.clz_pre_osaka/external_vm
+multi_vm/evm.clz_gas/external_vm
+multi_vm/evm.clz_osaka/external_vm
+multi_vm/evm.clz_stack_underflow/external_vm
 multi_vm/evm.dupn_undefined/external_vm
 multi_vm/evm.eofcreate_undefined/external_vm
 multi_vm/evm.evmone_block_max_stack_growth_overflow/external_vm

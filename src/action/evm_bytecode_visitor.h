@@ -172,6 +172,9 @@ private:
         case OP_SAR:
           handleShift<BinaryOperator::BO_SHR_S>();
           break;
+        case OP_CLZ:
+          handleClz();
+          break;
         case OP_POP:
           handlePop();
           break;
@@ -760,6 +763,12 @@ private:
   void handleNot() {
     Operand Opnd = pop();
     Operand Result = Builder.handleNot(Opnd);
+    push(Result);
+  }
+
+  void handleClz() {
+    Operand Opnd = pop();
+    Operand Result = Builder.handleClz(Opnd);
     push(Result);
   }
 

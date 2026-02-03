@@ -92,6 +92,7 @@ public:
         break;
       case OP_ISZERO:
       case OP_NOT:
+      case OP_CLZ:
       case OP_CALLDATALOAD:
       case OP_EXTCODESIZE:
       case OP_EXTCODEHASH:

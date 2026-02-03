@@ -1384,6 +1384,13 @@ typename EVMMirBuilder::Operand EVMMirBuilder::handleNot(const Operand &LHSOp) {
   return Operand(Result, EVMType::UINT256);
 }
 
+typename EVMMirBuilder::Operand
+EVMMirBuilder::handleClz(const Operand &ValueOp) {
+  const auto &RuntimeFunctions = getRuntimeFunctionTable();
+  return callRuntimeFor<const intx::uint256 *, const intx::uint256 &>(
+      RuntimeFunctions.GetClz, ValueOp);
+}
+
 EVMMirBuilder::U256Inst
 EVMMirBuilder::handleLeftShift(const U256Inst &Value, MInstruction *ShiftAmount,
                                MInstruction *IsLargeShift) {

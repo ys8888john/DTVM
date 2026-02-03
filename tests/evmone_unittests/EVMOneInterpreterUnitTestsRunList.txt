@@ -144,6 +144,9 @@ multi_vm/evm.sstore_cost_net_gas_metering/external_vm
 multi_vm/evm.sstore_out_of_block_gas/external_vm
 multi_vm/evm.sstore_pop_stack/external_vm
 multi_vm/evm.clz_pre_osaka/external_vm
+multi_vm/evm.clz_gas/external_vm
+multi_vm/evm.clz_osaka/external_vm
+multi_vm/evm.clz_stack_underflow/external_vm
 multi_vm/evm.undefined/external_vm
 multi_vm/evm.undefined_instruction_analysis_overflow/external_vm
 multi_vm/evm.undefined_instruction_block_cost_negative/external_vm

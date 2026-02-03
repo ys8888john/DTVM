@@ -180,6 +180,9 @@ int main(int argc, char *argv[]) {
   bool DeployMode = false;
   std::string ContractAddress;
   std::string SenderAddress = "1000000000000000000000000000000000000000";
+#ifdef ZEN_ENABLE_EVM
+  evmc_revision EvmRevision = zen::evm::DEFAULT_REVISION;
+#endif
 
   const std::unordered_map<std::string, InputFormat> FormatMap = {
       {"wasm", InputFormat::WASM},
@@ -198,6 +201,24 @@ int main(int argc, char *argv[]) {
       {"error", LoggerLevel::Error}, {"fatal", LoggerLevel::Fatal},
       {"off", LoggerLevel::Off},
   };
+#ifdef ZEN_ENABLE_EVM
+  const std::unordered_map<std::string, evmc_revision> EvmRevisionMap = {
+      {"frontier", EVMC_FRONTIER},
+      {"homestead", EVMC_HOMESTEAD},
+      {"tangerine_whistle", EVMC_TANGERINE_WHISTLE},
+      {"spurious_dragon", EVMC_SPURIOUS_DRAGON},
+      {"byzantium", EVMC_BYZANTIUM},
+      {"constantinople", EVMC_CONSTANTINOPLE},
+      {"petersburg", EVMC_PETERSBURG},
+      {"istanbul", EVMC_ISTANBUL},
+      {"berlin", EVMC_BERLIN},
+      {"london", EVMC_LONDON},
+      {"paris", EVMC_PARIS},
+      {"shanghai", EVMC_SHANGHAI},
+      {"cancun", EVMC_CANCUN},
+      {"osaka", EVMC_OSAKA},
+  };
+#endif // ZEN_ENABLE_EVM
 
   try {
     CLIParser->add_option("INPUT_FILE", Filename, "input filename")->required();
@@ -256,10 +277,15 @@ int main(int argc, char *argv[]) {
 #ifdef ZEN_ENABLE_EVM
     CLIParser->add_flag("--enable-evm-gas", Config.EnableEvmGasMetering,
                         "Enable EVM gas metering when compiling EVM bytecode");
-    CLIParser->add_option("--calldata", Calldata, "Calldata hex pass to EVM");
 #endif // ZEN_ENABLE_EVM
 #endif // ZEN_ENABLE_MULTIPASS_JIT
-
+#ifdef ZEN_ENABLE_EVM
+    CLIParser->add_option("--calldata", Calldata, "Calldata hex pass to EVM");
+    CLIParser
+        ->add_option("--evm-revision", EvmRevision,
+                     "EVM revision (e.g., cancun, osaka)")
+        ->transform(CLI::CheckedTransformer(EvmRevisionMap, CLI::ignore_case));
+#endif // ZEN_ENABLE_EVM
     CLI11_PARSE(*CLIParser, argc, argv);
   } catch (const std::exception &E) {
     printf("failed to parse command line arguments: %s\n", E.what());
@@ -297,7 +323,7 @@ int main(int argc, char *argv[]) {
     // Set runtime for ZenMockedEVMHost
     MockedHost.setRuntime(RT.get());
 
-    MayBe<EVMModule *> ModRet = RT->loadEVMModule(Filename);
+    MayBe<EVMModule *> ModRet = RT->loadEVMModule(Filename, EvmRevision);
     if (!ModRet) {
       const Error &Err = ModRet.getError();
       ZEN_ASSERT(!Err.isEmpty());
@@ -323,6 +349,7 @@ int main(int argc, char *argv[]) {
       return exitMain(EXIT_FAILURE, RT.get());
     }
     EVMInstance *Inst = *InstRet;
+    Inst->setRevision(EvmRevision);
     evmc_call_kind MsgKind = DeployMode ? EVMC_CREATE : EVMC_CALL;
     evmc::Result ExeResult;
     std::vector<uint8_t> Bytecode;

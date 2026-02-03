@@ -183,6 +183,7 @@ DEFINE_TERNARY_OP(Mulmod,
 // Unary operations
 DEFINE_UNARY_OP(Not, (~A));
 DEFINE_UNARY_OP(IsZero, (A == 0));
+DEFINE_UNARY_OP(Clz, (intx::clz(A)));
 
 // Bitwise operations
 DEFINE_BINARY_OP(And, (A & B));
