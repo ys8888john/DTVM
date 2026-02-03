@@ -218,3 +218,4 @@ multi_vm/evm.eip2929_case2/external_vm
 multi_vm/evm.extcode/external_vm
 multi_vm/evm.extcodecopy_nonzero_index/external_vm
 multi_vm/evm.extcodecopy_fill_tail/external_vm
+multi_vm/evm.evmone_block_gas_cost_overflow_balance/external_vm
