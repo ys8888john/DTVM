@@ -1200,6 +1200,12 @@ void CreateHandler::doExecute() {
     return;
   }
 
+  // First check memory expansion with uint256 values
+  if (!checkMemoryExpandAndChargeGas(Frame, CodeOffset, CodeSizeVal)) {
+    Context->setStatus(EVMC_OUT_OF_GAS);
+    return;
+  }
+
   const auto Rev = currentRevision();
   // EIP-3860
   if (Rev >= EVMC_SHANGHAI and CodeSizeVal > MAX_SIZE_OF_INITCODE) {
@@ -1227,11 +1233,6 @@ void CreateHandler::doExecute() {
     return;
   }
 
-  // First check memory expansion with uint256 values
-  if (!checkMemoryExpandAndChargeGas(Frame, CodeOffset, CodeSizeVal)) {
-    Context->setStatus(EVMC_OUT_OF_GAS);
-    return;
-  }
   uint64_t CodeSize = static_cast<uint64_t>(CodeSizeVal);
   uint64_t CodeOffset64 = CodeSize == 0 ? 0 : static_cast<uint64_t>(CodeOffset);
 
@@ -1262,9 +1263,6 @@ void CreateHandler::doExecute() {
       NewMsg.gas > 0 ? static_cast<uint64_t>(NewMsg.gas) : 0;
   uint64_t GasLeft =
       Result.gas_left > 0 ? static_cast<uint64_t>(Result.gas_left) : 0;
-  if (Result.status_code != EVMC_SUCCESS && Result.status_code != EVMC_REVERT) {
-    GasLeft = 0;
-  }
   if (CallGas > GasLeft) {
     chargeGas(Frame, CallGas - GasLeft); // it's safe to charge gas here
   }
@@ -1461,9 +1459,6 @@ void CallHandler::doExecute() {
       NewMsg.gas > 0 ? static_cast<uint64_t>(NewMsg.gas) : 0;
   uint64_t GasLeft =
       Result.gas_left > 0 ? static_cast<uint64_t>(Result.gas_left) : 0;
-  if (Result.status_code != EVMC_SUCCESS && Result.status_code != EVMC_REVERT) {
-    GasLeft = 0;
-  }
   uint64_t GasUsed = CallGas > GasLeft ? CallGas - GasLeft : 0;
   if (TransfersValue) {
     GasUsed = GasUsed > CALL_GAS_STIPEND ? GasUsed - CALL_GAS_STIPEND : 0;
