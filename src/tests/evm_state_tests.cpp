@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <gtest/gtest.h>
+#include <intx/intx.hpp>
 
 using namespace zen::evm;
 using namespace zen::utils;
@@ -62,8 +63,10 @@ TxIntrinsicCost computeTxIntrinsicCost(const evmc_revision Revision,
     }
   }
 
-  const int64_t AuthListCost = static_cast<int64_t>(PT.AuthorizationListSize) *
-                               AuthorizationEmptyAccountCost;
+  const int64_t AuthListCost =
+      Revision >= EVMC_PRAGUE ? static_cast<int64_t>(PT.AuthorizationListSize) *
+                                    AuthorizationEmptyAccountCost
+                              : 0;
 
   int64_t InitcodeCost = 0;
   if (IsCreateTx && Revision >= EVMC_SHANGHAI) {
@@ -173,10 +176,28 @@ ExecutionResult executeStateTest(const StateTestFixture &Fixture,
     return Result;
   };
 
+  auto MaybeReturnInvalid = [&](const std::string &Reason) {
+    if (!ExpectedResult.ExpectedException.empty()) {
+      return ExecutionResult{true, {}};
+    }
+    return MakeFailure(Reason + " for " + Fixture.TestName + " (" + Fork + ")");
+  };
+
   try {
     ParsedTransaction PT =
         createTransactionFromIndex(*Fixture.Transaction, ExpectedResult);
     const evmc_revision Revision = mapForkToRevision(Fork);
+
+    const bool HasAuthorizationListField =
+        Fixture.Transaction &&
+        Fixture.Transaction->HasMember("authorizationList") &&
+        (*Fixture.Transaction)["authorizationList"].IsArray();
+    const bool IsType4Tx = !ExpectedResult.ExpectedTxBytes.empty() &&
+                           ExpectedResult.ExpectedTxBytes[0] == 0x04;
+    if (Revision < EVMC_PRAGUE && (HasAuthorizationListField || IsType4Tx)) {
+      return MaybeReturnInvalid("Type 4 transaction pre-fork");
+    }
+
     const TxIntrinsicCost IntrinsicCost = computeTxIntrinsicCost(Revision, PT);
 
     const bool IsCreateTx =
@@ -201,6 +222,104 @@ ExecutionResult executeStateTest(const StateTestFixture &Fixture,
                          " (" + Fork + ")");
     }
 
+    // Validate EIP-1559/4844 transaction constraints before execution.
+    std::optional<evmc::uint256be> MaxFeePerGas;
+    std::optional<evmc::uint256be> MaxPriorityFeePerGas;
+    if (Fixture.Transaction) {
+      const auto &Tx = *Fixture.Transaction;
+      if (Tx.HasMember("gasPrice") && Tx["gasPrice"].IsString()) {
+        MaxFeePerGas = parseUint256(Tx["gasPrice"].GetString());
+      } else if (Tx.HasMember("maxFeePerGas") &&
+                 Tx["maxFeePerGas"].IsString()) {
+        MaxFeePerGas = parseUint256(Tx["maxFeePerGas"].GetString());
+      }
+      if (Tx.HasMember("maxPriorityFeePerGas") &&
+          Tx["maxPriorityFeePerGas"].IsString()) {
+        MaxPriorityFeePerGas =
+            parseUint256(Tx["maxPriorityFeePerGas"].GetString());
+      }
+    }
+
+    const intx::uint256 BaseFee =
+        intx::be::load<intx::uint256>(Fixture.Environment.block_base_fee);
+    if (MaxFeePerGas) {
+      const intx::uint256 MaxFee = intx::be::load<intx::uint256>(*MaxFeePerGas);
+      if (MaxFee < BaseFee) {
+        return MaybeReturnInvalid("Max fee per gas below base fee");
+      }
+      if (MaxPriorityFeePerGas) {
+        const intx::uint256 MaxPriority =
+            intx::be::load<intx::uint256>(*MaxPriorityFeePerGas);
+        if (MaxPriority > MaxFee) {
+          return MaybeReturnInvalid("Max priority fee exceeds max fee");
+        }
+      }
+    }
+
+    const bool HasBlobFields =
+        Fixture.Transaction &&
+        ((Fixture.Transaction->HasMember("maxFeePerBlobGas") &&
+          (*Fixture.Transaction)["maxFeePerBlobGas"].IsString()) ||
+         (Fixture.Transaction->HasMember("blobVersionedHashes") &&
+          (*Fixture.Transaction)["blobVersionedHashes"].IsArray()));
+    if (HasBlobFields) {
+      const size_t BlobCount = PT.BlobHashes.size();
+      if (BlobCount == 0) {
+        return MaybeReturnInvalid("Blob transaction has zero blobs");
+      }
+      const size_t MaxBlobs = (Revision >= EVMC_PRAGUE)
+                                  ? static_cast<size_t>(9)
+                                  : static_cast<size_t>(6);
+      if (BlobCount > MaxBlobs) {
+        return MaybeReturnInvalid("Blob transaction has too many blobs");
+      }
+      for (const auto &Hash : PT.BlobHashes) {
+        if (Hash.bytes[0] != 0x01) {
+          return MaybeReturnInvalid("Invalid blob versioned hash");
+        }
+      }
+      if (!PT.MaxFeePerBlobGas) {
+        return MaybeReturnInvalid("Missing max fee per blob gas");
+      }
+      const intx::uint256 MaxBlobFee =
+          intx::be::load<intx::uint256>(*PT.MaxFeePerBlobGas);
+      const intx::uint256 BlobBaseFee =
+          intx::be::load<intx::uint256>(Fixture.Environment.blob_base_fee);
+      if (MaxBlobFee < BlobBaseFee) {
+        return MaybeReturnInvalid("Max fee per blob gas below base fee");
+      }
+    }
+
+    if (MaxFeePerGas) {
+      intx::uint256 SenderBalance = 0;
+      for (const auto &PA : Fixture.PreState) {
+        if (std::memcmp(PA.Address.bytes, PT.Message->sender.bytes, 20) == 0) {
+          SenderBalance = intx::be::load<intx::uint256>(PA.Account.balance);
+          break;
+        }
+      }
+
+      const intx::uint256 GasLimit = intx::uint256(TxGasLimit);
+      const intx::uint256 MaxFee = intx::be::load<intx::uint256>(*MaxFeePerGas);
+      const intx::uint256 Value =
+          intx::be::load<intx::uint256>(PT.Message->value);
+      intx::uint256 TotalCost = GasLimit * MaxFee + Value;
+
+      if (HasBlobFields && PT.MaxFeePerBlobGas) {
+        constexpr uint64_t BlobGasPerBlob = 131072;
+        const intx::uint256 BlobGas =
+            intx::uint256(PT.BlobHashes.size()) * intx::uint256(BlobGasPerBlob);
+        const intx::uint256 MaxBlobFee =
+            intx::be::load<intx::uint256>(*PT.MaxFeePerBlobGas);
+        TotalCost += BlobGas * MaxBlobFee;
+      }
+
+      if (SenderBalance < TotalCost) {
+        return MaybeReturnInvalid(
+            "Sender balance insufficient for upfront cost");
+      }
+    }
+
     const int64_t ExecutionGasLimit = TxGasLimit - IntrinsicCost.Intrinsic;
     PT.Message->gas = ExecutionGasLimit;
 
@@ -213,37 +332,13 @@ ExecutionResult executeStateTest(const StateTestFixture &Fixture,
         precompile::isModExpPrecompile(PrecompileAddr) ||
         precompile::isBlake2bPrecompile(PrecompileAddr, Revision);
 
-    // Find the target account (contract to call)
+    // Find the target account (contract to call) if present.
     const ParsedAccount *TargetAccount = nullptr;
     for (const auto &PA : Fixture.PreState) {
       if (std::memcmp(PA.Address.bytes, PT.Message->recipient.bytes, 20) == 0) {
         TargetAccount = &PA;
         break;
       }
-    }
-
-    if (!TargetAccount && !IsCreateTx && !IsPrecompile) {
-      if (!ExpectedResult.ExpectedException.empty()) {
-        return {true, {}};
-      }
-      if (DEBUG) {
-        std::cout << "No target account found for test: " << Fixture.TestName
-                  << std::endl;
-      }
-      return MakeFailure(
-          "Target account " +
-          evmc::hex(evmc::bytes_view(PT.Message->recipient.bytes, 20)) +
-          " not present in pre-state for " + Fixture.TestName + " (" + Fork +
-          ")");
-    }
-
-    // Skip if no code to execute
-    if (!IsCreateTx && !IsPrecompile && TargetAccount->Account.code.empty()) {
-      if (DEBUG) {
-        std::cout << "No code to execute for test: " << Fixture.TestName
-                  << std::endl;
-      }
-      return {true, {}};
     }
 
     RuntimeConfig Config = buildRuntimeConfig();
@@ -287,9 +382,12 @@ ExecutionResult executeStateTest(const StateTestFixture &Fixture,
     } else if (IsPrecompile) {
       ExecConfig.Bytecode = nullptr;
       ExecConfig.BytecodeSize = 0;
-    } else {
+    } else if (TargetAccount) {
       ExecConfig.Bytecode = TargetAccount->Account.code.data();
       ExecConfig.BytecodeSize = TargetAccount->Account.code.size();
+    } else {
+      ExecConfig.Bytecode = nullptr;
+      ExecConfig.BytecodeSize = 0;
     }
     ExecConfig.Message = *PT.Message;
     ExecConfig.Revision = Revision;
@@ -402,7 +500,6 @@ const std::vector<StateTestFixture> &getStateFixtures() {
       std::cout << "Found " << JsonFiles.size() << " JSON test files in "
                 << DEFAULT_TEST_DIR << std::endl;
     }
-
     for (const auto &FilePath : JsonFiles) {
       auto FixturesFromFile = parseStateTestFile(FilePath);
       for (auto &Fixture : FixturesFromFile) {
