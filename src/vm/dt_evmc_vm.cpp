@@ -143,6 +143,9 @@ evmc_result execute(evmc_vm *EVMInstance, const evmc_host_interface *Host,
 
   if (!VM->RT) {
     VM->RT = Runtime::newEVMRuntime(VM->Config, VM->ExecHost.get());
+    if (!VM->RT) {
+      return evmc_make_result(EVMC_FAILURE, 0, 0, nullptr, 0);
+    }
   }
   // Use interpreter mode for large bytecode
   std::unique_ptr<ScopedConfig> TempConfig;
