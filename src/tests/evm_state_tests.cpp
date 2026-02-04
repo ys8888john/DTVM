@@ -330,7 +330,8 @@ ExecutionResult executeStateTest(const StateTestFixture &Fixture,
             : PT.Message->recipient;
     const bool IsPrecompile =
         precompile::isModExpPrecompile(PrecompileAddr) ||
-        precompile::isBlake2bPrecompile(PrecompileAddr, Revision);
+        precompile::isBlake2bPrecompile(PrecompileAddr, Revision) ||
+        precompile::isIdentityPrecompile(PrecompileAddr);
 
     // Find the target account (contract to call) if present.
     const ParsedAccount *TargetAccount = nullptr;

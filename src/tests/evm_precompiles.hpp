@@ -37,6 +37,15 @@ inline bool isBlake2bPrecompile(const evmc::address &Addr,
   return Addr.bytes[sizeof(Addr.bytes) - 1] == 0x09;
 }
 
+inline bool isIdentityPrecompile(const evmc::address &Addr) noexcept {
+  for (size_t I = 0; I + 1 < sizeof(Addr.bytes); ++I) {
+    if (Addr.bytes[I] != 0) {
+      return false;
+    }
+  }
+  return Addr.bytes[sizeof(Addr.bytes) - 1] == 0x04;
+}
+
 inline intx::uint256 loadUint256Padded(const uint8_t *Data, size_t Size,
                                        size_t Offset) noexcept {
   uint8_t Buffer[32] = {0};
@@ -219,6 +228,38 @@ inline void blake2bCompress(uint64_t H[8], const uint64_t M[16], uint64_t T0,
   for (size_t I = 0; I < 8; ++I) {
     H[I] ^= V[I] ^ V[I + 8];
   }
+}
+
+inline evmc::Result executeIdentity(const evmc_message &Msg,
+                                    std::vector<uint8_t> &ReturnData) {
+  constexpr uint64_t BaseGas = 15;
+  constexpr uint64_t GasPerWord = 3;
+  const uint64_t MsgGas = Msg.gas < 0 ? 0 : static_cast<uint64_t>(Msg.gas);
+  const uint64_t InputSize = static_cast<uint64_t>(Msg.input_size);
+  const uint64_t Words = (InputSize + 31) / 32;
+  const uint64_t GasCost = BaseGas + GasPerWord * Words;
+
+  if (GasCost > MsgGas) {
+    ReturnData.clear();
+    return evmc::Result(EVMC_OUT_OF_GAS, 0, 0, nullptr, 0);
+  }
+
+  if (InputSize != 0 && Msg.input_data == nullptr) {
+    ReturnData.clear();
+    return evmc::Result(EVMC_OUT_OF_GAS, 0, 0, nullptr, 0);
+  }
+
+  if (InputSize == 0) {
+    ReturnData.clear();
+  } else {
+    const auto *Input = static_cast<const uint8_t *>(Msg.input_data);
+    ReturnData.assign(Input, Input + InputSize);
+  }
+
+  const int64_t GasLeft = static_cast<int64_t>(MsgGas - GasCost);
+  return evmc::Result(EVMC_SUCCESS, GasLeft, 0,
+                      ReturnData.empty() ? nullptr : ReturnData.data(),
+                      ReturnData.size());
 }
 
 inline evmc::Result executeModExp(const evmc_message &Msg,

@@ -119,7 +119,8 @@ public:
             : Config.Message.recipient;
     const bool IsPrecompile =
         precompile::isModExpPrecompile(PrecompileAddr) ||
-        precompile::isBlake2bPrecompile(PrecompileAddr, ActiveRevision);
+        precompile::isBlake2bPrecompile(PrecompileAddr, ActiveRevision) ||
+        precompile::isIdentityPrecompile(PrecompileAddr);
     if (!Config.Bytecode && Config.BytecodeSize != 0) {
       Result.ErrorMessage = "Bytecode buffer is null";
       return Result;
@@ -471,6 +472,9 @@ public:
     }
     if (precompile::isModExpPrecompile(PrecompileAddr)) {
       return precompile::executeModExp(Msg, Revision, ReturnData);
+    }
+    if (precompile::isIdentityPrecompile(PrecompileAddr)) {
+      return precompile::executeIdentity(Msg, ReturnData);
     }
 
     // For CALLCODE and DELEGATECALL, code comes from code_address, not
