@@ -150,8 +150,8 @@ for STACK_TYPE in ${STACK_TYPES[@]}; do
             mv build/lib/* evmone
             cd evmone
             git status
-            ./run_unittests.sh ../tests/evmone_unittests/EVMOneMultipassUnitTestsRunList.txt mode=multipass
-            ./run_unittests.sh ../tests/evmone_unittests/EVMOneInterpreterUnitTestsRunList.txt mode=interpreter
+            ./run_unittests.sh ../tests/evmone_unittests/EVMOneMultipassUnitTestsRunList.txt "./libdtvmapi.so,mode=multipass"
+            ./run_unittests.sh ../tests/evmone_unittests/EVMOneInterpreterUnitTestsRunList.txt "./libdtvmapi.so,mode=interpreter"
             ;;
     esac
 done
