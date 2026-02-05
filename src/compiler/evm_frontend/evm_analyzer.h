@@ -5,6 +5,7 @@
 #define EVM_FRONTEND_EVM_ANALYZER_H
 
 #include "compiler/common/common_defs.h"
+#include "evm/evm.h"
 #include "evmc/evmc.h"
 #include "evmc/instructions.h"
 
@@ -15,7 +16,7 @@ class EVMAnalyzer {
   using Bytes = zen::common::Bytes;
 
 public:
-  EVMAnalyzer() {}
+  EVMAnalyzer(evmc_revision Rev = zen::evm::DEFAULT_REVISION) : Revision(Rev) {}
 
   struct BlockInfo {
     uint64_t EntryPC = 0;
@@ -24,6 +25,7 @@ public:
     int32_t MinPopHeight = 0;
     int32_t StackHeightDiff = 0;
     bool IsJumpDest = false;
+    bool HasUndefinedInstr = false;
 
     BlockInfo() = default;
     BlockInfo(uint64_t PC) : EntryPC(PC) {}
@@ -38,6 +40,19 @@ public:
     const uint8_t *Ip = Bytecode;
     const uint8_t *IpEnd = Bytecode + BytecodeSize;
 
+    // Get instruction tables based on revision
+    const auto *InstructionMetrics =
+        evmc_get_instruction_metrics_table(Revision);
+    const auto *InstructionNames = evmc_get_instruction_names_table(Revision);
+    if (!InstructionMetrics) {
+      InstructionMetrics =
+          evmc_get_instruction_metrics_table(zen::evm::DEFAULT_REVISION);
+    }
+    if (!InstructionNames) {
+      InstructionNames =
+          evmc_get_instruction_names_table(zen::evm::DEFAULT_REVISION);
+    }
+
     // Initialize block info for the first block
     BlockInfo CurInfo(0);
 
@@ -48,240 +63,23 @@ public:
 
       Ip++;
 
-      // Calculate stack operations for each opcode
-      int PopCount = 0;
-      int PushCount = 0;
+      // Check if opcode is undefined for current revision
+      bool IsUndefined = (InstructionNames[Opcode] == nullptr);
+      if (IsUndefined) {
+        CurInfo.HasUndefinedInstr = true;
+      }
 
-      // Determine stack effects based on opcode
-      switch (Opcode) {
-      case OP_STOP:
-      case OP_INVALID:
-        // No stack operations
-        break;
-      case OP_SELFDESTRUCT:
-        PopCount = 1;
-        break;
-      case OP_ADD:
-      case OP_MUL:
-      case OP_SUB:
-      case OP_DIV:
-      case OP_SDIV:
-      case OP_MOD:
-      case OP_SMOD:
-      case OP_EXP:
-      case OP_SIGNEXTEND:
-      case OP_LT:
-      case OP_GT:
-      case OP_SLT:
-      case OP_SGT:
-      case OP_EQ:
-      case OP_AND:
-      case OP_OR:
-      case OP_XOR:
-      case OP_BYTE:
-      case OP_SHL:
-      case OP_SHR:
-      case OP_SAR:
-        PopCount = 2;
-        PushCount = 1;
-        break;
-      case OP_ADDMOD:
-      case OP_MULMOD:
-        PopCount = 3;
-        PushCount = 1;
-        break;
-      case OP_ISZERO:
-      case OP_NOT:
-      case OP_CLZ:
-      case OP_CALLDATALOAD:
-      case OP_EXTCODESIZE:
-      case OP_EXTCODEHASH:
-      case OP_BLOCKHASH:
-      case OP_MLOAD:
-      case OP_TLOAD:
-      case OP_BALANCE:
-      case OP_SLOAD:
-      case OP_BLOBHASH:
-        PopCount = 1;
-        PushCount = 1;
-        break;
-      case OP_MSIZE:
-      case OP_CALLDATASIZE:
-      case OP_ADDRESS:
-      case OP_ORIGIN:
-      case OP_CALLER:
-      case OP_CALLVALUE:
-      case OP_GASPRICE:
-      case OP_NUMBER:
-      case OP_PREVRANDAO:
-      case OP_GASLIMIT:
-      case OP_CHAINID:
-      case OP_SELFBALANCE:
-      case OP_BASEFEE:
-      case OP_BLOBBASEFEE:
-      case OP_TIMESTAMP:
-      case OP_COINBASE:
-        PushCount = 1;
-        break;
-      case OP_KECCAK256:
-        PopCount = 2;
-        PushCount = 1;
-        break;
-      case OP_MSTORE:
-      case OP_MSTORE8:
-      case OP_SSTORE:
-      case OP_TSTORE:
-        PopCount = 2;
-        break;
-      case OP_MCOPY:
-        PopCount = 3;
-        break;
-      case OP_PC:
-      case OP_GAS:
-      case OP_CODESIZE:
-      case OP_RETURNDATASIZE:
-        PopCount = 0;
-        PushCount = 1;
-        break;
-      case OP_POP:
-        PopCount = 1;
-        PushCount = 0;
-        break;
-      case OP_JUMP:
-        PopCount = 1;
-        PushCount = 0;
-        break;
-      case OP_RETURN:
-      case OP_REVERT:
-      case OP_JUMPI:
-        PopCount = 2;
-        PushCount = 0;
-        break;
-      case OP_PUSH0:
-        PopCount = 0;
-        PushCount = 1;
-        break;
-      case OP_PUSH1:
-      case OP_PUSH2:
-      case OP_PUSH3:
-      case OP_PUSH4:
-      case OP_PUSH5:
-      case OP_PUSH6:
-      case OP_PUSH7:
-      case OP_PUSH8:
-      case OP_PUSH9:
-      case OP_PUSH10:
-      case OP_PUSH11:
-      case OP_PUSH12:
-      case OP_PUSH13:
-      case OP_PUSH14:
-      case OP_PUSH15:
-      case OP_PUSH16:
-      case OP_PUSH17:
-      case OP_PUSH18:
-      case OP_PUSH19:
-      case OP_PUSH20:
-      case OP_PUSH21:
-      case OP_PUSH22:
-      case OP_PUSH23:
-      case OP_PUSH24:
-      case OP_PUSH25:
-      case OP_PUSH26:
-      case OP_PUSH27:
-      case OP_PUSH28:
-      case OP_PUSH29:
-      case OP_PUSH30:
-      case OP_PUSH31:
-      case OP_PUSH32: {
-        PopCount = 0;
-        PushCount = 1;
+      // Get stack metrics from the instruction metrics table
+      const auto &Metrics = InstructionMetrics[Opcode];
+      // stack_height_required equals PopCount
+      int PopCount = Metrics.stack_height_required;
+      // PushCount = PopCount + stack_height_change
+      int PushCount = PopCount + Metrics.stack_height_change;
+
+      // Handle PUSH instructions - need to skip the immediate bytes
+      if (Opcode >= OP_PUSH1 && Opcode <= OP_PUSH32) {
         uint8_t PushBytes = Opcode - OP_PUSH0;
         Ip += PushBytes;
-        break;
-      }
-      case OP_DUP1:
-      case OP_DUP2:
-      case OP_DUP3:
-      case OP_DUP4:
-      case OP_DUP5:
-      case OP_DUP6:
-      case OP_DUP7:
-      case OP_DUP8:
-      case OP_DUP9:
-      case OP_DUP10:
-      case OP_DUP11:
-      case OP_DUP12:
-      case OP_DUP13:
-      case OP_DUP14:
-      case OP_DUP15:
-      case OP_DUP16: {
-        uint8_t BaseN = Opcode - OP_DUP1;
-        PopCount = BaseN + 1;
-        PushCount = BaseN + 2;
-        break;
-      }
-      case OP_SWAP1:
-      case OP_SWAP2:
-      case OP_SWAP3:
-      case OP_SWAP4:
-      case OP_SWAP5:
-      case OP_SWAP6:
-      case OP_SWAP7:
-      case OP_SWAP8:
-      case OP_SWAP9:
-      case OP_SWAP10:
-      case OP_SWAP11:
-      case OP_SWAP12:
-      case OP_SWAP13:
-      case OP_SWAP14:
-      case OP_SWAP15:
-      case OP_SWAP16: {
-        uint8_t BaseN = Opcode - OP_SWAP1;
-        PopCount = BaseN + 2;
-        PushCount = BaseN + 2;
-        break;
-      }
-      case OP_LOG0:
-      case OP_LOG1:
-      case OP_LOG2:
-      case OP_LOG3:
-      case OP_LOG4: {
-        uint8_t BaseN = Opcode - OP_LOG0;
-        PopCount = BaseN + 2;
-        break;
-      }
-      case OP_CREATE:
-        PopCount = 3;
-        PushCount = 1;
-        break;
-      case OP_CREATE2:
-        PopCount = 4;
-        PushCount = 1;
-        break;
-      case OP_CALL:
-      case OP_CALLCODE:
-        PopCount = 7;
-        PushCount = 1;
-        break;
-      case OP_DELEGATECALL:
-      case OP_STATICCALL:
-        PopCount = 6;
-        PushCount = 1;
-        break;
-      case OP_CALLDATACOPY:
-      case OP_CODECOPY:
-      case OP_RETURNDATACOPY:
-        PopCount = 3;
-        break;
-      case OP_EXTCODECOPY:
-        PopCount = 4;
-        break;
-      case OP_JUMPDEST:
-        break;
-      default:
-        // For unhandled opcodes, treat as invalid
-        Opcode = OP_INVALID;
-        break;
       }
 
       // Update stack height
@@ -343,6 +141,7 @@ public:
 private:
   std::map<uint64_t, BlockInfo> BlockInfos;
   uint64_t PC = 0;
+  evmc_revision Revision = zen::evm::DEFAULT_REVISION;
 };
 
 } // namespace COMPILER
