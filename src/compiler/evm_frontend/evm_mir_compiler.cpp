@@ -3054,6 +3054,9 @@ EVMMirBuilder::convertCallResult(MInstruction *CallInstr) {
 }
 
 void EVMMirBuilder::normalizeOperandU64(Operand &Param, uint64_t *Value) {
+  if (Param.getType() == EVMType::BYTES32) {
+    Param = convertBytes32ToU256Operand(Param);
+  }
   if (Param.getType() != EVMType::UINT256) {
     return;
   }
@@ -3148,6 +3151,9 @@ void EVMMirBuilder::normalizeOperandU64NonConst(Operand &Param,
 
 void EVMMirBuilder::normalizeOffsetWithSize(Operand &Offset, Operand &Size) {
   normalizeOperandU64(Size);
+  if (Offset.getType() == EVMType::BYTES32) {
+    Offset = convertBytes32ToU256Operand(Offset);
+  }
   if (Offset.getType() != EVMType::UINT256) {
     return;
   }
