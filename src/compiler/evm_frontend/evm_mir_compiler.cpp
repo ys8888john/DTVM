@@ -1884,7 +1884,7 @@ typename EVMMirBuilder::Operand EVMMirBuilder::handleByte(Operand IndexOp,
   // Create U256 result with only the low component set
   // High components are zeroed out as per EVM specification
   U256Inst ResultComponents = {};
-  ResultComponents[0] = Result;
+  ResultComponents[0] = protectUnsafeValue(Result, MirI64Type);
   for (size_t I = 1; I < EVM_ELEMENTS_COUNT; ++I) {
     ResultComponents[I] = Zero;
   }
