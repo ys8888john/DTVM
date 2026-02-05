@@ -1930,14 +1930,23 @@ EVMMirBuilder::handleSignextend(Operand IndexOp, Operand ValueOp) {
   // Calculate sign extension mask
   // FullMask = (1 << (BitOffset + 1)) - 1
   // InvMask = ~FullMask = FullMask ^ AllOnes
+  // Note: When BitOffset == 63, MaskBits == 64, and (1 << 64) causes undefined
+  // behavior on x86-64 (SHL masks shift amount to 6 bits, so 1 << 64 becomes
+  // 1 << 0 = 1). We need to handle this case specially.
   MInstruction *One = createIntConstInstruction(MirI64Type, 1);
   MInstruction *AllOnes = createIntConstInstruction(MirI64Type, ~0ULL);
   MInstruction *MaskBits = createInstruction<BinaryInstruction>(
       false, OP_add, MirI64Type, BitOffset, One);
+  MInstruction *Is64 = createInstruction<CmpInstruction>(
+      false, CmpInstruction::Predicate::ICMP_EQ, &Ctx.I64Type, MaskBits,
+      Const64);
   MInstruction *Mask = createInstruction<BinaryInstruction>(
       false, OP_shl, MirI64Type, One, MaskBits);
-  MInstruction *FullMask = createInstruction<BinaryInstruction>(
+  MInstruction *FullMaskNormal = createInstruction<BinaryInstruction>(
       false, OP_sub, MirI64Type, Mask, One);
+  // When MaskBits == 64, FullMask should be AllOnes (0xFFFFFFFFFFFFFFFF)
+  MInstruction *FullMask = createInstruction<SelectInstruction>(
+      false, MirI64Type, Is64, AllOnes, FullMaskNormal);
   MInstruction *InvMask = createInstruction<BinaryInstruction>(
       false, OP_xor, MirI64Type, FullMask, AllOnes);
 
