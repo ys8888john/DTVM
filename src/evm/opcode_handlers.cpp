@@ -1269,8 +1269,12 @@ void CreateHandler::doExecute() {
   }
   Context->getInstance()->addGasRefund(Result.gas_refund);
 
-  Context->setReturnData(std::vector<uint8_t>(
-      Result.output_data, Result.output_data + Result.output_size));
+  if (Result.status_code == EVMC_REVERT) {
+    Context->setReturnData(std::vector<uint8_t>(
+        Result.output_data, Result.output_data + Result.output_size));
+  } else {
+    Context->setReturnData(std::vector<uint8_t>());
+  }
   if (Result.status_code == EVMC_SUCCESS) {
     Frame->pop(); // pop the assume value
     Frame->push(intx::be::load<intx::uint256>(Result.create_address));

@@ -807,6 +807,10 @@ public:
           SenderIt->second.nonce++;
         }
         evmc::Result Failure(ExecResult.status_code, RemainingGas, GasRefund);
+        if (ExecResult.status_code == EVMC_REVERT && !ReturnData.empty()) {
+          Failure.output_data = ReturnData.data();
+          Failure.output_size = ReturnData.size();
+        }
         Failure.create_address = NewAddr;
         return Failure;
       }
