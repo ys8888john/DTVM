@@ -203,6 +203,8 @@ GTEST_API_ int main(int argc, char **argv) {
   uint64_t GasLimit = 0xFFFF'FFFF'FFFF;
   LoggerLevel LogLevel = LoggerLevel::Info;
   RuntimeConfig Config;
+  Config.Format = InputFormat::EVM;
+  Config.Mode = RunMode::InterpMode;
 
   const std::unordered_map<std::string, InputFormat> FormatMap = {
       {"wasm", InputFormat::WASM},

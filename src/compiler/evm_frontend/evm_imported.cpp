@@ -876,6 +876,8 @@ static uint64_t evmHandleCallInternal(zen::runtime::EVMInstance *Instance,
   }
 
   uint64_t CallGas = Gas;
+  bool HasEnoughBalance = true;
+
   if (HasValueArgs) {
     std::optional<bool> AccountState;
     uint64_t GasCost = HasValue ? zen::evm::CALL_VALUE_COST : 0;
@@ -900,22 +902,16 @@ static uint64_t evmHandleCallInternal(zen::runtime::EVMInstance *Instance,
         Instance, zen::common::ErrorCode::GasLimitExceeded);
   }
 
-  if (HasValueArgs) {
-    bool HasEnoughBalance = true;
-    if (HasValue) {
-      Instance->addGas(zen::evm::CALL_GAS_STIPEND);
-      CallGas += zen::evm::CALL_GAS_STIPEND;
-
-      const auto CallerBalance =
-          Module->Host->get_balance(CurrentMsg->recipient);
-      const intx::uint256 CallerValue =
-          intx::be::load<intx::uint256>(CallerBalance);
-      HasEnoughBalance = CallerValue >= intx::uint256(Value);
-
-      if (!HasEnoughBalance) {
-        Instance->setReturnData({});
-        return 0;
-      }
+  if (HasValueArgs && HasValue) {
+    CallGas += zen::evm::CALL_GAS_STIPEND;
+    Instance->addGas(zen::evm::CALL_GAS_STIPEND);
+    const auto CallerBalance = Module->Host->get_balance(CurrentMsg->recipient);
+    const intx::uint256 CallerValue =
+        intx::be::load<intx::uint256>(CallerBalance);
+    HasEnoughBalance = CallerValue >= intx::uint256(Value);
+    if (!HasEnoughBalance) {
+      Instance->setReturnData({});
+      return 0;
     }
   }
 

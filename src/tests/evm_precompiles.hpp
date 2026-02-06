@@ -99,22 +99,33 @@ inline uint64_t adjustedExponentLength(uint64_t ExpLen,
 inline boost::multiprecision::cpp_int
 multComplexityEIP198(uint64_t MaxLen) noexcept {
   using boost::multiprecision::cpp_int;
-  const cpp_int X(MaxLen);
+  using cpp_int_et_off = boost::multiprecision::number<
+      boost::multiprecision::cpp_int_backend<>, boost::multiprecision::et_off>;
+  const cpp_int_et_off X(MaxLen);
+  cpp_int_et_off Result = X * X;
   if (MaxLen <= 64) {
-    return X * X;
+    return cpp_int(Result);
   }
   if (MaxLen <= 1024) {
-    return X * X / 4 + cpp_int(96) * MaxLen - 3072;
+    Result /= 4;
+    Result += cpp_int_et_off(96) * MaxLen;
+    Result -= 3072;
+    return cpp_int(Result);
   }
-  return X * X / 16 + cpp_int(480) * MaxLen - 199680;
+  Result /= 16;
+  Result += cpp_int_et_off(480) * MaxLen;
+  Result -= 199680;
+  return cpp_int(Result);
 }
 
 inline boost::multiprecision::cpp_int
 multComplexityEIP2565(uint64_t MaxLen) noexcept {
   using boost::multiprecision::cpp_int;
+  using cpp_int_et_off = boost::multiprecision::number<
+      boost::multiprecision::cpp_int_backend<>, boost::multiprecision::et_off>;
   const uint64_t Words = (MaxLen + 7) / 8;
-  const cpp_int W(Words);
-  return W * W;
+  const cpp_int_et_off W(Words);
+  return cpp_int(W * W);
 }
 
 inline bool toUint64(const boost::multiprecision::cpp_int &Value,
@@ -309,21 +320,25 @@ inline evmc::Result executeModExp(const evmc_message &Msg,
   const uint64_t IterationCount = std::max<uint64_t>(AdjustedExpLen, 1);
 
   using boost::multiprecision::cpp_int;
-  cpp_int GasCost = 0;
+  using cpp_int_et_off = boost::multiprecision::number<
+      boost::multiprecision::cpp_int_backend<>, boost::multiprecision::et_off>;
+  cpp_int_et_off GasCost = 0;
   if (Revision >= EVMC_BERLIN) {
-    GasCost =
-        multComplexityEIP2565(MaxLen) * cpp_int(IterationCount) / cpp_int(3);
+    GasCost = cpp_int_et_off(multComplexityEIP2565(MaxLen));
+    GasCost *= cpp_int_et_off(IterationCount);
+    GasCost /= cpp_int_et_off(3);
     if (GasCost < 200) {
       GasCost = 200;
     }
   } else {
-    GasCost =
-        multComplexityEIP198(MaxLen) * cpp_int(IterationCount) / cpp_int(20);
-    GasCost += cpp_int(LegacyModExpBaseGas);
+    GasCost = cpp_int_et_off(multComplexityEIP198(MaxLen));
+    GasCost *= cpp_int_et_off(IterationCount);
+    GasCost /= cpp_int_et_off(20);
+    GasCost += cpp_int_et_off(LegacyModExpBaseGas);
   }
 
   uint64_t GasCost64 = 0;
-  if (!toUint64(GasCost, GasCost64)) {
+  if (!toUint64(cpp_int(GasCost), GasCost64)) {
     return evmc::Result(EVMC_OUT_OF_GAS, 0, 0, nullptr, 0);
   }
 
