@@ -575,6 +575,17 @@ private:
         }
 
         case OP_JUMPDEST: {
+          // Skip to the last consecutive JUMPDEST if there are multiple
+          uint64_t PrevPC = PC;
+          while (Ip < IpEnd && static_cast<evmc_opcode>(*Ip) == OP_JUMPDEST) {
+            Ip++;
+            PC++;
+          }
+          if (PC > PrevPC) {
+            // Meter gas for the skipped JUMPDESTs
+            Builder.meterGas(PC - PrevPC);
+          }
+          // Now process the last JUMPDEST (current position after skipping)
           handleEndBlock();
           Builder.handleJumpDest(PC);
           Builder.meterOpcode(Opcode, PC);

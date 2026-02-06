@@ -147,6 +147,7 @@ multi_vm/evm.keccak256_memory_cost/external_vm
 multi_vm/evm.log/external_vm
 multi_vm/evm.log0_empty/external_vm
 multi_vm/evm.log_data_cost/external_vm
+multi_vm/evm.loop_full_of_jumpdests/external_vm
 multi_vm/evm.max_code_size_push1/external_vm
 multi_vm/evm.mcopy/external_vm
 multi_vm/evm.mcopy_memory_cost/external_vm

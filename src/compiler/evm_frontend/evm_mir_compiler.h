@@ -628,6 +628,8 @@ private:
   // Jump table for dynamic jumps
   bool HasIndirectJump = false;
   std::map<uint64_t, MBasicBlock *> JumpDestTable;
+  // Consecutive JUMPDEST ranges: {start_pc, end_pc}
+  std::vector<std::pair<uint64_t, uint64_t>> ConsecutiveJumpDests;
   MBasicBlock *DefaultJumpBB = nullptr; // For invalid jump destinations
 
   std::map<uint64_t, std::vector<MBasicBlock *>> JumpHashTable;
