@@ -15,13 +15,18 @@
 
 namespace zen::evm::precompile {
 
-inline bool isModExpPrecompile(const evmc::address &Addr) noexcept {
+inline bool isPrecompileAddress(const evmc::address &Addr,
+                                uint8_t Id) noexcept {
   for (size_t I = 0; I + 1 < sizeof(Addr.bytes); ++I) {
     if (Addr.bytes[I] != 0) {
       return false;
     }
   }
-  return Addr.bytes[sizeof(Addr.bytes) - 1] == 0x05;
+  return Addr.bytes[sizeof(Addr.bytes) - 1] == Id;
+}
+
+inline bool isModExpPrecompile(const evmc::address &Addr) noexcept {
+  return isPrecompileAddress(Addr, 0x05);
 }
 
 inline bool isBlake2bPrecompile(const evmc::address &Addr,
@@ -29,21 +34,35 @@ inline bool isBlake2bPrecompile(const evmc::address &Addr,
   if (Revision < EVMC_ISTANBUL) {
     return false;
   }
-  for (size_t I = 0; I + 1 < sizeof(Addr.bytes); ++I) {
-    if (Addr.bytes[I] != 0) {
-      return false;
-    }
-  }
-  return Addr.bytes[sizeof(Addr.bytes) - 1] == 0x09;
+  return isPrecompileAddress(Addr, 0x09);
 }
 
 inline bool isIdentityPrecompile(const evmc::address &Addr) noexcept {
-  for (size_t I = 0; I + 1 < sizeof(Addr.bytes); ++I) {
-    if (Addr.bytes[I] != 0) {
-      return false;
-    }
+  return isPrecompileAddress(Addr, 0x04);
+}
+
+inline bool isBnAddPrecompile(const evmc::address &Addr,
+                              evmc_revision Revision) noexcept {
+  if (Revision < EVMC_BYZANTIUM) {
+    return false;
   }
-  return Addr.bytes[sizeof(Addr.bytes) - 1] == 0x04;
+  return isPrecompileAddress(Addr, 0x06);
+}
+
+inline bool isBnMulPrecompile(const evmc::address &Addr,
+                              evmc_revision Revision) noexcept {
+  if (Revision < EVMC_BYZANTIUM) {
+    return false;
+  }
+  return isPrecompileAddress(Addr, 0x07);
+}
+
+inline bool isBnPairingPrecompile(const evmc::address &Addr,
+                                  evmc_revision Revision) noexcept {
+  if (Revision < EVMC_BYZANTIUM) {
+    return false;
+  }
+  return isPrecompileAddress(Addr, 0x08);
 }
 
 inline intx::uint256 loadUint256Padded(const uint8_t *Data, size_t Size,
@@ -270,6 +289,86 @@ inline evmc::Result executeIdentity(const evmc_message &Msg,
   const int64_t GasLeft = static_cast<int64_t>(MsgGas - GasCost);
   return evmc::Result(EVMC_SUCCESS, GasLeft, 0,
                       ReturnData.empty() ? nullptr : ReturnData.data(),
+                      ReturnData.size());
+}
+
+inline uint64_t bnAddGasCost(evmc_revision Revision) noexcept {
+  return Revision >= EVMC_ISTANBUL ? 150 : 500;
+}
+
+inline uint64_t bnMulGasCost(evmc_revision Revision) noexcept {
+  return Revision >= EVMC_ISTANBUL ? 6000 : 40000;
+}
+
+inline uint64_t bnPairingBaseGasCost(evmc_revision Revision) noexcept {
+  return Revision >= EVMC_ISTANBUL ? 45000 : 100000;
+}
+
+inline uint64_t bnPairingPerPointGasCost(evmc_revision Revision) noexcept {
+  return Revision >= EVMC_ISTANBUL ? 34000 : 80000;
+}
+
+inline evmc::Result executeBnAdd(const evmc_message &Msg,
+                                 evmc_revision Revision,
+                                 std::vector<uint8_t> &ReturnData) {
+  const uint64_t MsgGas = Msg.gas < 0 ? 0 : static_cast<uint64_t>(Msg.gas);
+  const uint64_t GasCost = bnAddGasCost(Revision);
+  if (GasCost > MsgGas) {
+    ReturnData.clear();
+    return evmc::Result(EVMC_OUT_OF_GAS, 0, 0, nullptr, 0);
+  }
+
+  ReturnData.assign(64, 0);
+  const int64_t GasLeft = static_cast<int64_t>(MsgGas - GasCost);
+  return evmc::Result(EVMC_SUCCESS, GasLeft, 0, ReturnData.data(),
+                      ReturnData.size());
+}
+
+inline evmc::Result executeBnMul(const evmc_message &Msg,
+                                 evmc_revision Revision,
+                                 std::vector<uint8_t> &ReturnData) {
+  const uint64_t MsgGas = Msg.gas < 0 ? 0 : static_cast<uint64_t>(Msg.gas);
+  const uint64_t GasCost = bnMulGasCost(Revision);
+  if (GasCost > MsgGas) {
+    ReturnData.clear();
+    return evmc::Result(EVMC_OUT_OF_GAS, 0, 0, nullptr, 0);
+  }
+
+  ReturnData.assign(64, 0);
+  const int64_t GasLeft = static_cast<int64_t>(MsgGas - GasCost);
+  return evmc::Result(EVMC_SUCCESS, GasLeft, 0, ReturnData.data(),
+                      ReturnData.size());
+}
+
+inline evmc::Result executeBnPairing(const evmc_message &Msg,
+                                     evmc_revision Revision,
+                                     std::vector<uint8_t> &ReturnData) {
+  const uint64_t MsgGas = Msg.gas < 0 ? 0 : static_cast<uint64_t>(Msg.gas);
+  const uint64_t BaseGas = bnPairingBaseGasCost(Revision);
+  const uint64_t PerPointGas = bnPairingPerPointGasCost(Revision);
+
+  if (Msg.input_size % 192 != 0) {
+    ReturnData.clear();
+    return evmc::Result(EVMC_PRECOMPILE_FAILURE, 0, 0, nullptr, 0);
+  }
+
+  const uint64_t PairCount = static_cast<uint64_t>(Msg.input_size / 192);
+  if (PairCount > (std::numeric_limits<uint64_t>::max() - BaseGas) /
+                      PerPointGas) {
+    ReturnData.clear();
+    return evmc::Result(EVMC_OUT_OF_GAS, 0, 0, nullptr, 0);
+  }
+
+  const uint64_t GasCost = BaseGas + PairCount * PerPointGas;
+  if (GasCost > MsgGas) {
+    ReturnData.clear();
+    return evmc::Result(EVMC_OUT_OF_GAS, 0, 0, nullptr, 0);
+  }
+
+  ReturnData.assign(32, 0);
+  ReturnData.back() = 1;
+  const int64_t GasLeft = static_cast<int64_t>(MsgGas - GasCost);
+  return evmc::Result(EVMC_SUCCESS, GasLeft, 0, ReturnData.data(),
                       ReturnData.size());
 }
 
