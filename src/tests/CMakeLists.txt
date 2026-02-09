@@ -68,6 +68,10 @@ if(ZEN_ENABLE_SPEC_TEST)
       evmStateTests evm_precompiles.hpp evm_state_tests.cpp
                     evm_test_fixtures.cpp evm_test_helpers.cpp
     )
+    # Only build evmFallbackExecutionTests if dtvmapi library is available
+    if(ZEN_ENABLE_LIBEVM)
+      add_executable(evmFallbackExecutionTests evm_fallback_execution_tests.cpp)
+    endif()
     add_executable(mptCompareCpp mpt_compare_cpp.cpp)
   else()
     add_executable(
@@ -123,6 +127,13 @@ if(ZEN_ENABLE_SPEC_TEST)
           PRIVATE dtvmcore rapidjson mpt gtest_main -fsanitize=address
           PUBLIC ${GTEST_BOTH_LIBRARIES}
         )
+        if(ZEN_ENABLE_LIBEVM)
+          target_link_libraries(
+            evmFallbackExecutionTests
+            PRIVATE dtvmapi gtest_main -fsanitize=address
+            PUBLIC ${GTEST_BOTH_LIBRARIES}
+          )
+        endif()
         target_link_libraries(
           mptCompareCpp PRIVATE dtvmcore rapidjson mpt -fsanitize=address
         )
@@ -171,6 +182,13 @@ if(ZEN_ENABLE_SPEC_TEST)
                   -static-libasan
           PUBLIC ${GTEST_BOTH_LIBRARIES}
         )
+        if(ZEN_ENABLE_LIBEVM)
+          target_link_libraries(
+            evmFallbackExecutionTests
+            PRIVATE dtvmapi gtest_main -fsanitize=address -static-libasan
+            PUBLIC ${GTEST_BOTH_LIBRARIES}
+          )
+        endif()
         target_link_libraries(
           mptCompareCpp PRIVATE dtvmcore rapidjson mpt -fsanitize=address
                                 -static-libasan
@@ -205,6 +223,13 @@ if(ZEN_ENABLE_SPEC_TEST)
         PRIVATE dtvmcore rapidjson mpt gtest_main
         PUBLIC ${GTEST_BOTH_LIBRARIES}
       )
+      if(ZEN_ENABLE_LIBEVM)
+        target_link_libraries(
+          evmFallbackExecutionTests
+          PRIVATE dtvmapi gtest_main
+          PUBLIC ${GTEST_BOTH_LIBRARIES}
+        )
+      endif()
       target_link_libraries(mptCompareCpp PRIVATE dtvmcore rapidjson mpt)
     endif()
   endif()
@@ -230,5 +255,8 @@ if(ZEN_ENABLE_SPEC_TEST)
         -P ${CMAKE_CURRENT_SOURCE_DIR}/RunSpecTests.cmake
     )
     add_test(NAME evmStateTests COMMAND evmStateTests)
+    if(ZEN_ENABLE_LIBEVM)
+      add_test(NAME evmFallbackExecutionTests COMMAND evmFallbackExecutionTests)
+    endif()
   endif()
 endif()

@@ -4,6 +4,7 @@
 #include "compiler/evm_frontend/evm_imported.h"
 #include "common/errors.h"
 #include "evm/gas_storage_cost.h"
+#include "evm/interpreter.h"
 #include "host/evm/crypto.h"
 #include "runtime/evm_instance.h"
 #include "runtime/evm_module.h"
@@ -118,7 +119,8 @@ const RuntimeFunctions &getRuntimeFunctionTable() {
       .HandleUndefined = &evmHandleUndefined,
       .HandleSelfDestruct = &evmHandleSelfDestruct,
       .GetKeccak256 = &evmGetKeccak256,
-      .GetClz = &evmGetClz};
+      .GetClz = &evmGetClz,
+      .HandleFallback = &evmHandleFallback};
   return Table;
 }
 
@@ -1114,6 +1116,55 @@ const uint8_t *evmGetKeccak256(zen::runtime::EVMInstance *Instance,
 
   return Cache.Keccak256Results.back().bytes;
 }
+void evmHandleFallback(zen::runtime::EVMInstance *Instance, uint64_t PC) {
+  // Phase 3 implementation: Complete JIT-to-interpreter fallback
+  // This function handles the transition from JIT execution to interpreter
+  // execution when fallback is triggered.
+
+  try {
+    // Create execution context
+    zen::evm::InterpreterExecContext FallbackContext(Instance);
+    evmc_message *CurrentMsg = Instance->getCurrentMessage();
+    ZEN_ASSERT(CurrentMsg);
+
+    // Allocate a frame without pushing message
+    FallbackContext.allocTopFrame(CurrentMsg);
+    Instance->popMessage();
+
+    // Restore state from the instance
+    FallbackContext.restoreStateFromInstance(PC);
+
+    // Create interpreter and execute
+    zen::evm::BaseInterpreter FallbackInterpreter(FallbackContext);
+    FallbackInterpreter.interpret();
+
+    // Execute from the specified state
+    const evmc::Result &Result = FallbackContext.getExeResult();
+    // Copy execute result from interpreter context to instance
+    if (Result.output_size > 0) {
+      Instance->setReturnData(std::vector<uint8_t>(
+          Result.output_data, Result.output_data + Result.output_size));
+    }
+    evmc::Result InstResult(Result.status_code, Result.gas_left,
+                            Result.gas_refund, Instance->getReturnData().data(),
+                            Instance->getReturnData().size());
+
+    // Store the execution result in the EVMInstance
+    Instance->setExeResult(std::move(InstResult));
+
+    // Clear any previous errors since fallback execution completed successfully
+    Instance->clearError();
+
+  } catch (const zen::common::Error &error) {
+    // Handle interpreter execution errors
+    Instance->setExceptionByHostapi(error);
+  } catch (const std::exception &e) {
+    // Handle unexpected errors during fallback execution
+    Instance->setExceptionByHostapi(
+        zen::common::getError(zen::common::ErrorCode::EVMInvalidInstruction));
+  }
+}
+
 const intx::uint256 *evmGetSLoad(zen::runtime::EVMInstance *Instance,
                                  const intx::uint256 &Index) {
   const zen::runtime::EVMModule *Module = Instance->getModule();

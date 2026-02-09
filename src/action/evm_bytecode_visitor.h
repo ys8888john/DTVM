@@ -84,6 +84,19 @@ private:
         bool IsJumpDest = (Opcode == OP_JUMPDEST);
         if (!IsJumpDest) {
           if (!Builder.isOpcodeDefined(Opcode)) {
+#ifdef ZEN_ENABLE_JIT_FALLBACK_TEST
+            // For testing purposes, we can use 0xEE as a FALLBACK trigger
+            // In a real scenario, this would call the runtime's handleUndefined
+            // function When testing is enabled, treat 0xEE opcodes as fallback
+            // triggers
+            if (Opcode == 0xee) {
+              handleEndBlock();
+              PC++;
+              Builder.fallbackToInterpreter(
+                  PC); // Continue from next instruction
+              continue;
+            }
+#endif
             handleEndBlock();
             Builder.handleUndefined();
             PC++;

@@ -74,6 +74,9 @@ case $TestSuite in
     "evmonetestsuite")
         CMAKE_OPTIONS="$CMAKE_OPTIONS -DZEN_ENABLE_EVM=ON -DZEN_ENABLE_LIBEVM=ON"
         ;;
+    "evmfallbacksuite")
+        CMAKE_OPTIONS="$CMAKE_OPTIONS -DZEN_ENABLE_SPEC_TEST=ON -DZEN_ENABLE_ASSEMBLYSCRIPT_TEST=ON -DZEN_ENABLE_EVM=ON -DZEN_ENABLE_LIBEVM=ON -DZEN_ENABLE_JIT_FALLBACK_TEST=ON"
+        ;;
 esac
 
 case $CPU_EXCEPTION_TYPE in
@@ -155,6 +158,10 @@ for STACK_TYPE in ${STACK_TYPES[@]}; do
             git status
             ./run_unittests.sh ../tests/evmone_unittests/EVMOneMultipassUnitTestsRunList.txt "./libdtvmapi.so,mode=multipass"
             ./run_unittests.sh ../tests/evmone_unittests/EVMOneInterpreterUnitTestsRunList.txt "./libdtvmapi.so,mode=interpreter"
+            ;;
+        "evmfallbacksuite")
+            python3 tools/run_evm_tests.py -r build/dtvm $EXTRA_EXE_OPTIONS
+            ./build/evmFallbackExecutionTests
             ;;
     esac
 done

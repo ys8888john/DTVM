@@ -422,6 +422,11 @@ public:
   void handleTStore(Operand Index, Operand ValueComponents);
   void handleSelfDestruct(Operand Beneficiary);
 
+  // ==================== Fallback Methods ====================
+
+  // Fallback to interpreter execution
+  void fallbackToInterpreter(uint64_t targetPC);
+
   // ==================== Runtime Interface for JIT ====================
 
 private:

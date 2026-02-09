@@ -74,6 +74,10 @@ public:
   uint8_t *getMemoryBase() const { return MemoryBase; }
   uint8_t *getMemory() { return Memory.get(); }
 
+  // ==================== Stack Methods ====================
+  const uint8_t *getEVMStack() const { return EVMStack; }
+  uint64_t getEVMStackSize() const { return EVMStackSize; }
+
   // ==================== Evmc Message Stack Methods ====================
   // Note: These methods manage the call stack for JIT host interface functions
   // that need access to evmc_message context throughout the call hierarchy.

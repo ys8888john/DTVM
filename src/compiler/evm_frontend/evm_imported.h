@@ -31,6 +31,7 @@ using VoidWithUInt64UInt64Fn = void (*)(zen::runtime::EVMInstance *, uint64_t,
 using VoidWithUInt64Fn = void (*)(zen::runtime::EVMInstance *, uint64_t);
 using VoidWithUInt64UInt64UInt64Fn = void (*)(zen::runtime::EVMInstance *,
                                               uint64_t, uint64_t, uint64_t);
+using FallbackFn = void (*)(zen::runtime::EVMInstance *, uint64_t);
 using VoidWithBytes32UInt64UInt64UInt64Fn = void (*)(
     zen::runtime::EVMInstance *, const uint8_t *, uint64_t, uint64_t, uint64_t);
 using Bytes32WithUInt64UInt64Fn =
@@ -133,6 +134,7 @@ struct RuntimeFunctions {
   VoidWithBytes32Fn HandleSelfDestruct;
   Bytes32WithUInt64UInt64Fn GetKeccak256;
   U256WithU256Fn GetClz;
+  FallbackFn HandleFallback;
 };
 
 const RuntimeFunctions &getRuntimeFunctionTable();
@@ -249,6 +251,7 @@ void evmHandleInvalid(zen::runtime::EVMInstance *Instance);
 void evmHandleUndefined(zen::runtime::EVMInstance *Instance);
 const uint8_t *evmGetKeccak256(zen::runtime::EVMInstance *Instance,
                                uint64_t Offset, uint64_t Length);
+void evmHandleFallback(zen::runtime::EVMInstance *Instance, uint64_t PC);
 const intx::uint256 *evmGetSLoad(zen::runtime::EVMInstance *Instance,
                                  const intx::uint256 &Index);
 void evmSetSStore(zen::runtime::EVMInstance *Instance,

@@ -2541,6 +2541,47 @@ typename EVMMirBuilder::Operand EVMMirBuilder::handleMSize() {
   MemSize = protectUnsafeValue(MemSize, &Ctx.I64Type);
   return convertSingleInstrToU256Operand(MemSize);
 }
+
+void EVMMirBuilder::fallbackToInterpreter(uint64_t targetPC) {
+  // Phase 1 implementation: Basic fallback infrastructure
+  // This method provides the interface for JIT-to-interpreter fallback
+  //
+  // The method generates MIR instructions to:
+  // 1. Synchronize current execution state (stack, memory) with EVMInstance
+  // 2. Call the runtime fallback function with the target PC
+  //
+  // State synchronization is handled automatically by the existing
+  // EVMInstance state management, so we can directly call the runtime function.
+
+#ifdef ZEN_ENABLE_EVM_GAS_REGISTER
+  syncGasToMemory();
+#endif
+  // Sync stack size to memory, all stack elements should be synced before
+  // calling this function
+  const int32_t StackSizeOffset =
+      zen::runtime::EVMInstance::getEVMStackSizeOffset();
+  MInstruction *StackSize = loadVariable(StackSizeVar);
+  setInstanceElement(&Ctx.I64Type, StackSize, StackSizeOffset);
+
+  const auto &RuntimeFunctions = getRuntimeFunctionTable();
+  // Create a constant instruction for the target PC
+  MType *I64Type = &Ctx.I64Type;
+  MInstruction *PCConst = createIntConstInstruction(I64Type, targetPC);
+
+  // Call the runtime fallback function
+  // This will transfer control to the interpreter at the specified PC
+  callRuntimeFor<void, uint64_t>(RuntimeFunctions.HandleFallback,
+                                 Operand(PCConst, EVMType::UINT64));
+
+  createInstruction<BrInstruction>(true, Ctx, ReturnBB);
+  addSuccessor(ReturnBB);
+
+  if (ReturnBB->empty()) {
+    setInsertBlock(ReturnBB);
+    handleVoidReturn();
+  }
+}
+
 typename EVMMirBuilder::Operand
 EVMMirBuilder::handleMLoad(Operand AddrComponents) {
   normalizeOperandU64(AddrComponents);

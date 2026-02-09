@@ -33,6 +33,10 @@ if(ZEN_ENABLE_SPEC_TEST)
   add_definitions(-DZEN_ENABLE_SPEC_TEST)
 endif()
 
+if(ZEN_ENABLE_JIT_FALLBACK_TEST)
+  add_definitions(-DZEN_ENABLE_JIT_FALLBACK_TEST)
+endif()
+
 if(ZEN_ENABLE_DWASM)
   add_definitions(-DZEN_ENABLE_DWASM)
 endif()

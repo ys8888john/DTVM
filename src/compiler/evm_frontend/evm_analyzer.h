@@ -67,6 +67,10 @@ public:
       bool IsUndefined = (InstructionNames[Opcode] == nullptr);
       if (IsUndefined) {
         CurInfo.HasUndefinedInstr = true;
+#ifdef ZEN_ENABLE_JIT_FALLBACK_TEST
+        // Reset undefined instruction flag in fallback test
+        CurInfo.HasUndefinedInstr = false;
+#endif
       }
 
       // Get stack metrics from the instruction metrics table

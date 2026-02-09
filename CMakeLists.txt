@@ -54,6 +54,9 @@ option(ZEN_ENABLE_ASSEMBLYSCRIPT_TEST "Enable AssemblyScript test" OFF)
 option(ZEN_ENABLE_MOCK_CHAIN_TEST "Enable mock chain hostapis for test" OFF)
 option(ZEN_ENABLE_EVMABI_TEST "Enable evmabi test" OFF)
 option(ZEN_ENABLE_COVERAGE "Enable coverage test" OFF)
+option(ZEN_ENABLE_JIT_FALLBACK_TEST
+       "Enable JIT fallback testing with undefined opcodes" OFF
+)
 
 if(CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
   set(ZEN_BUILD_TARGET_X86_64 ON)

@@ -105,6 +105,9 @@ public:
   }
   const evmc::Result &getExeResult() const { return ExeResult; }
   void setExeResult(evmc::Result Result) { ExeResult = std::move(Result); }
+
+  // Fallback support: restore execution state from EVMInstance
+  void restoreStateFromInstance(uint64_t startPC);
 };
 
 class BaseInterpreter {

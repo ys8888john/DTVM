@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "evm/interpreter.h"
+#include "common/errors.h"
 #include "evm/evm_cache.h"
 #include "evm/opcode_handlers.h"
 #include "evmc/instructions.h"
@@ -1297,4 +1298,78 @@ void BaseInterpreter::interpret() {
                          Context.getInstance()->getGasRefund(),
                          ReturnData.data(), ReturnData.size());
   Context.setExeResult(std::move(ExeResult));
+}
+
+void InterpreterExecContext::restoreStateFromInstance(uint64_t StartPC) {
+  // Restore execution state from EVMInstance for fallback support
+  runtime::EVMInstance *Instance = getInstance();
+
+  // Validate PC bounds
+  const EVMModule *Mod = Instance->getModule();
+  if (StartPC >= Mod->CodeSize) {
+    setStatus(EVMC_BAD_JUMP_DESTINATION);
+    return;
+  }
+
+  // Get current frame (should already be allocated)
+  EVMFrame *Frame = getCurFrame();
+  if (!Frame) {
+    setStatus(EVMC_INVALID_INSTRUCTION);
+    return;
+  }
+
+  // Restore PC
+  Frame->Pc = StartPC;
+
+  // Restore stack state from EVMInstance
+  // The EVMInstance maintains the stack state that was synchronized from JIT
+  // Copy stack data from EVMInstance to EVMFrame
+
+  const uint8_t *EvmStackData = Instance->getEVMStack();
+  uint64_t EvmStackSize = Instance->getEVMStackSize();
+
+  // Calculate number of stack elements (each element is 32 bytes)
+  constexpr size_t ELEMENT_SIZE = 32; // 256 bits = 32 bytes
+  size_t NumElements = EvmStackSize / ELEMENT_SIZE;
+
+  // Validate stack size
+  if (NumElements > MAXSTACK) {
+    setStatus(EVMC_STACK_OVERFLOW);
+    return;
+  }
+
+  // Copy stack elements from EVMInstance to EVMFrame
+  Frame->Sp = NumElements;
+  for (size_t I = 0; I < NumElements; ++I) {
+    // Each stack element is 32 bytes, copy as intx::uint256
+    const uint8_t *ElementData = EvmStackData + (I * ELEMENT_SIZE);
+
+    // Convert from bytes to intx::uint256 using proper byte order
+    intx::uint256 Value;
+    for (size_t J = 0; J < ELEMENT_SIZE / 8; J++) {
+      Value[J] = static_cast<uint64_t>(*ElementData);
+      ElementData += 8;
+    }
+    Frame->Stack[I] = Value;
+  }
+
+  // Ensure memory state consistency between JIT and interpreter
+  // The EVMInstance maintains the authoritative memory state
+  // Synchronize EVMFrame memory with EVMInstance memory
+  uint8_t *InstanceMemory = Instance->getMemoryBase();
+  uint64_t InstanceMemorySize = Instance->getMemorySize();
+
+  if (InstanceMemory && InstanceMemorySize > 0) {
+    // Resize frame memory to match instance memory size
+    Frame->Memory.resize(InstanceMemorySize);
+
+    // Copy memory contents from EVMInstance to EVMFrame
+    std::memcpy(Frame->Memory.data(), InstanceMemory, InstanceMemorySize);
+  } else {
+    // Initialize with empty memory if instance has no memory allocated
+    Frame->Memory.clear();
+  }
+
+  // Reset execution status
+  setStatus(EVMC_SUCCESS);
 }
