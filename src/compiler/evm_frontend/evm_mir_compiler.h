@@ -238,6 +238,18 @@ public:
       // in DMIR.
       MInstruction *Carry = createIntConstInstruction(MirI64Type, 0);
 
+      // Pre-materialize all operand components into variables before the
+      // ADD/ADC carry chain. This ensures that during x86 lowering, no
+      // flag-modifying instructions (e.g. ADD for address computation in
+      // BYTES32-to-U256 conversion) are emitted between the ADD and ADC
+      // instructions that form the carry chain. Without this, lazy expression
+      // lowering of operands like BSWAP(LOAD(ADD(ptr, offset))) would emit
+      // x86 ADD instructions that clobber the carry flag (CF).
+      for (size_t I = 0; I < EVM_ELEMENTS_COUNT; ++I) {
+        LHS[I] = protectUnsafeValue(LHS[I], MirI64Type);
+        RHS[I] = protectUnsafeValue(RHS[I], MirI64Type);
+      }
+
       for (size_t I = 0; I < EVM_ELEMENTS_COUNT; ++I) {
         if (I == 0) {
           // First component: use regular ADD without carry
