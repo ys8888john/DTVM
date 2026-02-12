@@ -16,13 +16,14 @@
 
 #include <cstring>
 
+#ifdef ZEN_ENABLE_JIT_PRECOMPILE_FALLBACK
+#include "compiler/evm_frontend/evm_analyzer.h"
+#endif
+
 namespace {
 
 using namespace zen::runtime;
 using namespace zen::common;
-
-// JIT compilation limits (95% < 10KB)
-const size_t MAX_JIT_BYTECODE_SIZE = 0x6000;
 
 // RAII helper for temporarily changing runtime configuration
 class ScopedConfig {
@@ -147,14 +148,25 @@ evmc_result execute(evmc_vm *EVMInstance, const evmc_host_interface *Host,
       return evmc_make_result(EVMC_FAILURE, 0, 0, nullptr, 0);
     }
   }
-  // Use interpreter mode for large bytecode
+#ifdef ZEN_ENABLE_JIT_PRECOMPILE_FALLBACK
+  // Use interpreter mode for bytecode that would be too expensive to JIT.
+  // The EVMAnalyzer performs a pattern-aware O(n) scan that detects:
+  //  - raw bytecode size / estimated MIR instruction count too large
+  //  - high density of RA-expensive opcodes (SHL/SHR/SAR/MUL/SIGNEXTEND)
+  //  - long consecutive runs of RA-expensive ops
+  //  - DUP-induced feedback loops (b0 pattern)
   std::unique_ptr<ScopedConfig> TempConfig;
-  if (VM->Config.Mode == RunMode::MultipassMode &&
-      CodeSize > MAX_JIT_BYTECODE_SIZE) {
-    RuntimeConfig NewConfig = VM->Config;
-    NewConfig.Mode = RunMode::InterpMode;
-    TempConfig = std::make_unique<ScopedConfig>(VM->RT.get(), NewConfig);
+  if (VM->Config.Mode == RunMode::MultipassMode) {
+    COMPILER::EVMAnalyzer Analyzer(Rev);
+    Analyzer.analyze(Code, CodeSize);
+    const auto &JITResult = Analyzer.getJITSuitability();
+    if (JITResult.ShouldFallback) {
+      RuntimeConfig NewConfig = VM->Config;
+      NewConfig.Mode = RunMode::InterpMode;
+      TempConfig = std::make_unique<ScopedConfig>(VM->RT.get(), NewConfig);
+    }
   }
+#endif // ZEN_ENABLE_JIT_PRECOMPILE_FALLBACK
 
   uint32_t CheckSum = crc32(Code, CodeSize);
   uint64_t ModKey = (static_cast<uint64_t>(Rev) << 32) | CheckSum;

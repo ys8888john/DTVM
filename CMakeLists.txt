@@ -24,6 +24,11 @@ option(ZEN_ENABLE_BUILTIN_LIBC "Enable builtin libc (partial)" ON)
 option(ZEN_ENABLE_LIBEVM "Enable evmc library build" OFF)
 
 # Feature options
+option(
+  ZEN_ENABLE_JIT_PRECOMPILE_FALLBACK
+  "Enable interpreter fallback before JIT compilation for bytecode estimated to be too expensive"
+  ON
+)
 option(ZEN_ENABLE_CPU_EXCEPTION "Enable cpu trap to implement wasm trap" ON)
 option(ZEN_ENABLE_VIRTUAL_STACK "Enable virtual stack(no system stack)" OFF)
 option(ZEN_ENABLE_DUMP_CALL_STACK "Enable exception call stack dump" OFF)
