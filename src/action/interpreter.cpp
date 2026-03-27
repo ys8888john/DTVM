@@ -2051,13 +2051,23 @@ void BaseInterpreterImpl::interpret() {
             (uint32_t)IndirectFuncIdx >= Table->CurSize) {
           throw getError(ErrorCode::UndefinedElement);
         }
+#ifdef ZEN_ENABLE_REFERENCE_TYPES
+        // With reference types, elements are 64-bit and store FuncIdx + 1
+        // (0 means null/uninitialized)
+        uint64_t ElemVal = Table->Elements[IndirectFuncIdx];
+        if (ElemVal == 0) {
+          throw getError(ErrorCode::UninitializedElement);
+        }
+        FuncIdx = (uint32_t)(ElemVal - 1); // Subtract 1 to get actual FuncIdx
+#else
         FuncIdx = Table->Elements[IndirectFuncIdx];
-#ifdef ZEN_ENABLE_DEBUG_INTERP
-        ZEN_LOG_DEBUG("fidx: %d", FuncIdx);
-#endif
         if (FuncIdx == (uint32_t)-1) {
           throw getError(ErrorCode::UninitializedElement);
         }
+#endif
+#ifdef ZEN_ENABLE_DEBUG_INTERP
+        ZEN_LOG_DEBUG("fidx: %d", FuncIdx);
+#endif
         auto *FuncInstCallee = ModInst->getFunctionInst(FuncIdx);
         ZEN_ASSERT(FuncInstCallee);
         auto *ActualFuncType = FuncInstCallee->FuncType;

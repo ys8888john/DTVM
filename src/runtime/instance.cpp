@@ -42,12 +42,23 @@ void Module::InstanceLayout::compute() {
   GlobalVarSize = ZEN_ALIGN(Mod.GlobalVarSize, Alignment);
   TableInstancesSize = ZEN_ALIGN(sizeof(TableInstance) * NumTables, Alignment);
   TableElemsSize = 0;
+#ifdef ZEN_ENABLE_REFERENCE_TYPES
+  // With reference types, table elements are 64-bit
+  for (size_t I = 0; I < Mod.NumImportTables; ++I) {
+    TableElemsSize += Mod.ImportTableTable[I].InitSize * sizeof(uint64_t);
+  }
+  for (size_t I = 0; I < Mod.NumInternalTables; ++I) {
+    TableElemsSize += Mod.InternalTableTable[I].InitSize * sizeof(uint64_t);
+  }
+#else
+  // Without reference types, table elements are 32-bit (function indices)
   for (size_t I = 0; I < Mod.NumImportTables; ++I) {
     TableElemsSize += Mod.ImportTableTable[I].InitSize * sizeof(uint32_t);
   }
   for (size_t I = 0; I < Mod.NumInternalTables; ++I) {
     TableElemsSize += Mod.InternalTableTable[I].InitSize * sizeof(uint32_t);
   }
+#endif
   TableElemsSize = ZEN_ALIGN(TableElemsSize, Alignment);
   // at least malloc one memory instance after Instance object
   // because callNative.S will visit Instance::MemoryInstance::_memory_base
