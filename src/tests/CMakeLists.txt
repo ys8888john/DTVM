@@ -8,14 +8,26 @@ function(PROCESS_SPEC_FILES SPEC_CATEGORY_DIR)
     get_filename_component(SPEC_NAME ${SPEC_FILE_PATH} NAME_WE)
     set(OUTPUT_SPEC_SUBDIR "${CMAKE_BINARY_DIR}/wast/${CATEGORY}/${SPEC_NAME}")
     set(OUTPUT_SPEC_JSON "${OUTPUT_SPEC_SUBDIR}/${SPEC_NAME}.json")
-    add_custom_command(
-      OUTPUT ${OUTPUT_SPEC_JSON}
-      COMMAND mkdir -vp ${OUTPUT_SPEC_SUBDIR}
-      COMMAND wast2json --disable-bulk-memory -o ${OUTPUT_SPEC_JSON}
-              ${SPEC_FILE_PATH}
-      DEPENDS ${SPEC_FILE_PATH}
-      VERBATIM
-    )
+    # Use different flags for reference_types tests
+    if(CATEGORY STREQUAL "reference_types")
+      add_custom_command(
+        OUTPUT ${OUTPUT_SPEC_JSON}
+        COMMAND mkdir -vp ${OUTPUT_SPEC_SUBDIR}
+        COMMAND wast2json --disable-bulk-memory --enable-reference-types -o
+                ${OUTPUT_SPEC_JSON} ${SPEC_FILE_PATH}
+        DEPENDS ${SPEC_FILE_PATH}
+        VERBATIM
+      )
+    else()
+      add_custom_command(
+        OUTPUT ${OUTPUT_SPEC_JSON}
+        COMMAND mkdir -vp ${OUTPUT_SPEC_SUBDIR}
+        COMMAND wast2json --disable-bulk-memory -o ${OUTPUT_SPEC_JSON}
+                ${SPEC_FILE_PATH}
+        DEPENDS ${SPEC_FILE_PATH}
+        VERBATIM
+      )
+    endif()
     list(APPEND SPEC_JSONS ${OUTPUT_SPEC_JSON})
     set(SPEC_JSONS
         ${SPEC_JSONS}
@@ -40,6 +52,9 @@ if(ZEN_ENABLE_SPEC_TEST)
     endif()
     if(ZEN_ENABLE_MULTIPASS_JIT)
       list(APPEND SPEC_CATEGORIES "multipass")
+    endif()
+    if(ZEN_ENABLE_REFERENCE_TYPES)
+      list(APPEND SPEC_CATEGORIES "reference_types")
     endif()
   endif()
 

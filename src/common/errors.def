@@ -146,6 +146,7 @@ DEFINE_ERROR(BeforeExecution,   None,   UnexpectedFuncType, "unexpected function
 DEFINE_ERROR(Execution,     None,   IntegerOverflow,            "integer overflow")
 DEFINE_ERROR(Execution,     None,   IntegerDivByZero,           "integer divide by zero")
 DEFINE_ERROR(Execution,     None,   OutOfBoundsMemory,          "out of bounds memory access")
+DEFINE_ERROR(Execution,     None,   OutOfBoundsTableAccess,     "out of bounds table access")
 DEFINE_ERROR(Execution,     None,   InvalidConversionToInteger, "invalid conversion to integer")
 DEFINE_ERROR(Execution,     None,   CallStackExhausted,         "call stack exhausted")
 DEFINE_ERROR(Execution,     None,   IndirectCallTypeMismatch,   "indirect call type mismatch")

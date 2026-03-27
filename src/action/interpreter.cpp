@@ -2092,6 +2092,87 @@ void BaseInterpreterImpl::interpret() {
         }
         BREAK;
       }
+      // ==================== Reference Types Opcodes ====================
+      CASE(REF_NULL) : {
+#ifdef ZEN_ENABLE_REFERENCE_TYPES
+        uint8_t RefTypeByte = *Ip++;
+        WASMType RefType = getWASMRefTypeFromOpcode(RefTypeByte);
+        if (RefType == WASMType::ERROR_TYPE) {
+          throw getError(ErrorCode::InvalidType);
+        }
+        // Push null reference as 64-bit value (0)
+        Frame->valuePush<uint64_t>(ValStackPtr, 0);
+#else
+        throw getErrorWithExtraMessage(ErrorCode::UnsupportedOpcode,
+                                       "ref.null");
+#endif
+        BREAK;
+      }
+      CASE(REF_IS_NULL) : {
+#ifdef ZEN_ENABLE_REFERENCE_TYPES
+        uint64_t Ref = Frame->valuePop<uint64_t>(ValStackPtr);
+        Frame->valuePush<int32_t>(ValStackPtr, Ref == 0 ? 1 : 0);
+#else
+        throw getErrorWithExtraMessage(ErrorCode::UnsupportedOpcode,
+                                       "ref.is_null");
+#endif
+        BREAK;
+      }
+      CASE(REF_FUNC) : {
+#ifdef ZEN_ENABLE_REFERENCE_TYPES
+        uint32_t FuncIdx = 0;
+        Ip = readSafeLEBNumber(Ip, FuncIdx);
+        if (FuncIdx >= Mod->getNumTotalFunctions()) {
+          throw getError(ErrorCode::UnknownFunction);
+        }
+        // Push function index + 1 (to distinguish from null)
+        Frame->valuePush<uint64_t>(ValStackPtr, (uint64_t)FuncIdx + 1);
+#else
+        throw getErrorWithExtraMessage(ErrorCode::UnsupportedOpcode,
+                                       "ref.func");
+#endif
+        BREAK;
+      }
+      CASE(TABLE_GET) : {
+#ifdef ZEN_ENABLE_REFERENCE_TYPES
+        uint32_t TableIdx = 0;
+        Ip = readSafeLEBNumber(Ip, TableIdx);
+        if (TableIdx >= ModInst->NumTotalTables) {
+          throw getError(ErrorCode::UnknownTable);
+        }
+        TableInstance *Table = ModInst->getTableInst(TableIdx);
+        uint32_t Idx = Frame->valuePop<uint32_t>(ValStackPtr);
+        if (Idx >= Table->CurSize) {
+          throw getError(ErrorCode::OutOfBoundsTableAccess);
+        }
+        uint64_t Elem = Table->Elements[Idx];
+        Frame->valuePush<uint64_t>(ValStackPtr, Elem);
+#else
+        throw getErrorWithExtraMessage(ErrorCode::UnsupportedOpcode,
+                                       "table.get");
+#endif
+        BREAK;
+      }
+      CASE(TABLE_SET) : {
+#ifdef ZEN_ENABLE_REFERENCE_TYPES
+        uint32_t TableIdx = 0;
+        Ip = readSafeLEBNumber(Ip, TableIdx);
+        if (TableIdx >= ModInst->NumTotalTables) {
+          throw getError(ErrorCode::UnknownTable);
+        }
+        TableInstance *Table = ModInst->getTableInst(TableIdx);
+        uint64_t Ref = Frame->valuePop<uint64_t>(ValStackPtr);
+        uint32_t Idx = Frame->valuePop<uint32_t>(ValStackPtr);
+        if (Idx >= Table->CurSize) {
+          throw getError(ErrorCode::OutOfBoundsTableAccess);
+        }
+        Table->Elements[Idx] = Ref;
+#else
+        throw getErrorWithExtraMessage(ErrorCode::UnsupportedOpcode,
+                                       "table.set");
+#endif
+        BREAK;
+      }
     DEFAULT : {
       ZEN_LOG_ERROR("munimplemented opcode: 0x%x", Opcode);
       ZEN_ASSERT_TODO();

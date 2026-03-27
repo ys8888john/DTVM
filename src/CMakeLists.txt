@@ -41,6 +41,10 @@ if(ZEN_ENABLE_DWASM)
   add_definitions(-DZEN_ENABLE_DWASM)
 endif()
 
+if(ZEN_ENABLE_REFERENCE_TYPES)
+  add_definitions(-DZEN_ENABLE_REFERENCE_TYPES)
+endif()
+
 if(ZEN_ENABLE_VIRTUAL_STACK)
   add_definitions(-DZEN_ENABLE_VIRTUAL_STACK)
 endif()

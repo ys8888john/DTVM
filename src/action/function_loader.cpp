@@ -850,6 +850,77 @@ void FunctionLoader::load() {
       FuncCodeEntry.Stats |= Module::SF_table;
       break;
     }
+    case REF_NULL: {
+#ifdef ZEN_ENABLE_REFERENCE_TYPES
+      WASMType RefType = readRefType();
+      if (RefType != WASMType::FUNCREF && RefType != WASMType::EXTERNREF) {
+        throw getError(ErrorCode::InvalidType);
+      }
+      pushValueType(RefType);
+#else
+      throw getErrorWithExtraMessage(ErrorCode::UnsupportedOpcode, "ref.null");
+#endif
+      break;
+    }
+    case REF_IS_NULL: {
+#ifdef ZEN_ENABLE_REFERENCE_TYPES
+      WASMType RefType = popValueType(WASMType::ANY);
+      if (RefType != WASMType::FUNCREF && RefType != WASMType::EXTERNREF) {
+        throw getError(ErrorCode::TypeMismatch);
+      }
+      pushValueType(WASMType::I32);
+#else
+      throw getErrorWithExtraMessage(ErrorCode::UnsupportedOpcode,
+                                     "ref.is_null");
+#endif
+      break;
+    }
+    case REF_FUNC: {
+#ifdef ZEN_ENABLE_REFERENCE_TYPES
+      uint32_t FuncIdx = readU32();
+      if (!Mod.isValidFunc(FuncIdx)) {
+        throw getError(ErrorCode::UnknownFunction);
+      }
+      pushValueType(WASMType::FUNCREF);
+#else
+      throw getErrorWithExtraMessage(ErrorCode::UnsupportedOpcode, "ref.func");
+#endif
+      break;
+    }
+    case TABLE_GET:
+    case TABLE_SET: {
+#ifdef ZEN_ENABLE_REFERENCE_TYPES
+      uint32_t TableIdx = readU32();
+      if (!Mod.isValidTable(TableIdx)) {
+        throw getError(ErrorCode::UnknownTable);
+      }
+#ifdef ZEN_ENABLE_REFERENCE_TYPES
+      // Get table element type from module
+      WASMType ElementType = WASMType::FUNCREF; // default
+      if (TableIdx < Mod.getNumImportTables()) {
+        // For import tables, default to funcref
+        // The actual element type checking would need more infrastructure
+      } else {
+        uint32_t InternalTableIdx = TableIdx - Mod.getNumImportTables();
+        const auto &Table = Mod.InternalTableTable[InternalTableIdx];
+        ElementType = Table.ElementType;
+      }
+#endif
+      if (Opcode == TABLE_GET) {
+        popValueType(WASMType::I32); // index
+        pushValueType(ElementType);
+      } else {                       // TABLE_SET
+        popValueType(ElementType);   // value
+        popValueType(WASMType::I32); // index
+      }
+      FuncCodeEntry.Stats |= Module::SF_table;
+#else
+      throw getErrorWithExtraMessage(ErrorCode::UnsupportedOpcode,
+                                     Opcode == TABLE_GET ? "table.get"
+                                                         : "table.set");
+#endif
+      break;
+    }
     default:
       throw getErrorWithExtraMessage(ErrorCode::UnsupportedOpcode,
                                      getOpcodeHexString(Opcode));

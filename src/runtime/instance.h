@@ -91,7 +91,12 @@ struct FunctionInstance final {
 struct TableInstance final {
   uint32_t CurSize;
   uint32_t MaxSize;
-  uint32_t *Elements;
+#ifdef ZEN_ENABLE_REFERENCE_TYPES
+  WASMType ElementType; // FUNCREF or EXTERNREF
+  uint64_t *Elements;   // 64-bit to support both funcref and externref
+#else
+  uint32_t *Elements; // Original: function indices only
+#endif
 };
 
 struct MemoryInstance final {

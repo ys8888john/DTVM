@@ -95,13 +95,24 @@ ModuleLoader::Limits ModuleLoader::readLimits() {
 }
 
 ModuleLoader::TableType ModuleLoader::readTableType() {
-  [[maybe_unused]] WASMType RefType = readRefType();
+  WASMType RefType = readRefType();
+#ifdef ZEN_ENABLE_REFERENCE_TYPES
+  // In reference types mode, accept both funcref and externref
+  if (RefType != WASMType::FUNCREF && RefType != WASMType::EXTERNREF) {
+    throw getError(ErrorCode::InvalidType);
+  }
+#else
+  // Without reference types, only funcref is allowed
+  if (RefType != WASMType::FUNCREF) {
+    throw getError(ErrorCode::InvalidType);
+  }
+#endif
   const auto &[MinTableSize, OptMaxTableSize] = readLimits();
   uint32_t MaxTableSize = OptMaxTableSize.value_or(PresetMaxTableSize);
   if (MinTableSize > PresetMaxTableSize || MaxTableSize > PresetMaxTableSize) {
     throw getError(ErrorCode::TableSizeTooLarge);
   }
-  return {MinTableSize, MaxTableSize};
+  return {MinTableSize, MaxTableSize, RefType};
 }
 
 ModuleLoader::MemoryType ModuleLoader::readMemoryType() {
@@ -521,9 +532,10 @@ void ModuleLoader::loadImportSection() {
       }
 #ifdef ZEN_ENABLE_SPEC_TEST
       case IMPORT_TABLE: {
-        const auto [MinTableSize, MaxTableSize] = readTableType();
-        ImportTableTable.emplace_back(ModuleName, FieldName, MinTableSize,
-                                      MaxTableSize);
+        const auto &TableInfo = readTableType();
+        ImportTableTable.emplace_back(ModuleName, FieldName,
+                                      TableInfo.MinTableSize,
+                                      TableInfo.MaxTableSize);
         break;
       }
       case IMPORT_MEMORY: {
@@ -643,10 +655,13 @@ void ModuleLoader::loadTableSection() {
 
   TableEntry *Entry = Mod.initTableTable(NumTables);
   for (uint32_t I = 0; I < NumTables; ++I) {
-    const auto [MinTableSize, MaxTableSize] = readTableType();
+    const auto &TableInfo = readTableType();
 
-    Entry->InitSize = MinTableSize;
-    Entry->MaxSize = MaxTableSize;
+    Entry->InitSize = TableInfo.MinTableSize;
+    Entry->MaxSize = TableInfo.MaxTableSize;
+#ifdef ZEN_ENABLE_REFERENCE_TYPES
+    Entry->ElementType = TableInfo.ElementType;
+#endif
 
     ++Entry;
   }

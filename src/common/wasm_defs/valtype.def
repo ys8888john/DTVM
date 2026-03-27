@@ -26,4 +26,5 @@ DEFINE_BLOCK_TYPE(VOID,     0x40,   "void")
 #ifdef DEFINE_REF_TYPE
 //                NAME      OPCODE  TEXT
 DEFINE_REF_TYPE(FUNCREF,    0x70,	  "funcref")
+DEFINE_REF_TYPE(EXTERNREF,  0x6f,   "externref")
 #endif

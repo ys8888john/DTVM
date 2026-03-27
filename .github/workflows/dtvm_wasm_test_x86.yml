@@ -143,6 +143,39 @@ jobs:
 
           bash .ci/run_test_suite.sh
 
+  build_test_reference_types_on_x86:
+    name: Build and test DTVM reference types on x86-64
+    runs-on: ubuntu-latest
+    container:
+      image: dtvmdev1/dtvm-dev-x64:main
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v3
+        with:
+          submodules: "true"
+      - name: Code Format Check
+        run: |
+          ./tools/format.sh check
+      - name: Build and test reference types
+        run: |
+          echo "current home is $HOME"
+          export CUR_PROJECT=$(pwd)
+          export LLVM_SYS_150_PREFIX=/opt/llvm15
+          export LLVM_DIR=$LLVM_SYS_150_PREFIX/lib/cmake/llvm
+          export PATH=$LLVM_SYS_150_PREFIX/bin:$PATH
+          cd tests/wast/spec
+          git apply ../spec.patch
+          cd $CUR_PROJECT
+          export CMAKE_BUILD_TARGET=Debug
+          export ENABLE_ASAN=false
+          export RUN_MODE=interpreter
+          export INPUT_FORMAT=wasm
+          export TestSuite=microsuite
+          export CPU_EXCEPTION_TYPE='check'
+
+          # Build and run tests - reference_types tests are included via CMakeLists.txt
+          bash .ci/run_test_suite.sh
+
   build_test_evmabi_mock_cli_on_x86:
     name: Build and test DTVM cli with evm abi hostapis on x86-64
     runs-on: ubuntu-latest

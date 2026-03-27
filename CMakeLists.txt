@@ -40,6 +40,9 @@ option(ZEN_ENABLE_EVM_GAS_REGISTER
 option(ZEN_ENABLE_CHECKED_ARITHMETIC "Enable checked arithmetic" OFF)
 option(ZEN_ENABLE_DWASM "Enable DWasm spec" OFF)
 
+# WebAssembly proposal options
+option(ZEN_ENABLE_REFERENCE_TYPES "Enable reference types proposal" ON)
+
 # Library options
 option(ZEN_ENABLE_SGX "Enable SGX" OFF)
 

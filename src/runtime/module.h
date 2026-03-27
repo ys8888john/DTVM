@@ -205,6 +205,9 @@ struct FuncEntry final {
 struct TableEntry final {
   uint32_t InitSize;
   uint32_t MaxSize;
+#ifdef ZEN_ENABLE_REFERENCE_TYPES
+  WASMType ElementType;
+#endif
 };
 
 struct MemoryEntry final {

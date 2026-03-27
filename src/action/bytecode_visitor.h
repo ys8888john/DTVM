@@ -722,6 +722,57 @@ private:
         handleIntExtend<WASMType::I64, WASMType::I32, true>();
         break;
 
+      // ==================== Reference Types Opcodes ====================
+      case Opcode::REF_NULL:
+        Ip++; // Skip reftype byte
+#ifdef ZEN_ENABLE_REFERENCE_TYPES
+        throw getErrorWithExtraMessage(
+            ErrorCode::UnsupportedOpcode,
+            "reference types not supported in JIT mode");
+#else
+        throw getErrorWithExtraMessage(ErrorCode::UnsupportedOpcode,
+                                       "reference types not enabled (compile "
+                                       "with ZEN_ENABLE_REFERENCE_TYPES=ON)");
+#endif
+
+      case Opcode::REF_IS_NULL:
+#ifdef ZEN_ENABLE_REFERENCE_TYPES
+        throw getErrorWithExtraMessage(
+            ErrorCode::UnsupportedOpcode,
+            "reference types not supported in JIT mode");
+#else
+        throw getErrorWithExtraMessage(ErrorCode::UnsupportedOpcode,
+                                       "reference types not enabled (compile "
+                                       "with ZEN_ENABLE_REFERENCE_TYPES=ON)");
+#endif
+
+      case Opcode::REF_FUNC: {
+        Ip = readSafeLEBNumber(Ip, U32); // Skip funcidx
+#ifdef ZEN_ENABLE_REFERENCE_TYPES
+        throw getErrorWithExtraMessage(
+            ErrorCode::UnsupportedOpcode,
+            "reference types not supported in JIT mode");
+#else
+        throw getErrorWithExtraMessage(ErrorCode::UnsupportedOpcode,
+                                       "reference types not enabled (compile "
+                                       "with ZEN_ENABLE_REFERENCE_TYPES=ON)");
+#endif
+      }
+
+      case Opcode::TABLE_GET:
+      case Opcode::TABLE_SET: {
+        Ip = readSafeLEBNumber(Ip, U32); // Skip tableidx
+#ifdef ZEN_ENABLE_REFERENCE_TYPES
+        throw getErrorWithExtraMessage(
+            ErrorCode::UnsupportedOpcode,
+            "reference types not supported in JIT mode");
+#else
+        throw getErrorWithExtraMessage(ErrorCode::UnsupportedOpcode,
+                                       "reference types not enabled (compile "
+                                       "with ZEN_ENABLE_REFERENCE_TYPES=ON)");
+#endif
+      }
+
       default:
         throw getErrorWithExtraMessage(ErrorCode::UnsupportedOpcode,
                                        std::to_string(Opcode));

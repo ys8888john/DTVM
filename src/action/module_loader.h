@@ -24,8 +24,12 @@ class ModuleLoader final : public LoaderCommon {
   // {Min, Max?}
   typedef std::pair<uint32_t, common::Optional<uint32_t>> Limits;
 
-  // {MinTableSize, MaxTableSize}
-  typedef std::pair<uint32_t, uint32_t> TableType;
+  // {MinTableSize, MaxTableSize, ElementType}
+  struct TableType {
+    uint32_t MinTableSize;
+    uint32_t MaxTableSize;
+    WASMType ElementType;
+  };
   // {MinMemPages, MaxMemPages}
   typedef std::pair<uint32_t, uint32_t> MemoryType;
   // {Type, Mutable}

@@ -145,8 +145,14 @@ void Instantiator::instantiateTables(Instance &Inst) {
   const Module &Mod = *Inst.Mod;
   Inst.NumTotalTables = Mod.getNumTotalTables();
 
+#ifdef ZEN_ENABLE_REFERENCE_TYPES
+  // Use 64-bit elements for reference types support
+  uint64_t *TableElemStart = reinterpret_cast<uint64_t *>(
+      (uintptr_t)Inst.Tables + Inst.Mod->Layout.TableInstancesSize);
+#else
   uint32_t *TableElemStart = reinterpret_cast<uint32_t *>(
       (uintptr_t)Inst.Tables + Inst.Mod->Layout.TableInstancesSize);
+#endif
 
   for (uint32_t I = 0; I < Inst.NumTotalTables; ++I) {
     TableInstance &TableInst = Inst.Tables[I];
@@ -154,14 +160,31 @@ void Instantiator::instantiateTables(Instance &Inst) {
       const auto &Table = Mod.ImportTableTable[I];
       TableInst.CurSize = Table.InitSize;
       TableInst.MaxSize = Table.MaxSize;
+#ifdef ZEN_ENABLE_REFERENCE_TYPES
+      // Import tables default to funcref
+      TableInst.ElementType = WASMType::FUNCREF;
+#endif
     } else {
       const auto &Table = Mod.InternalTableTable[I - Mod.NumImportTables];
       TableInst.CurSize = Table.InitSize;
       TableInst.MaxSize = Table.MaxSize;
+#ifdef ZEN_ENABLE_REFERENCE_TYPES
+      TableInst.ElementType = Table.ElementType;
+#endif
     }
 
+#ifdef ZEN_ENABLE_REFERENCE_TYPES
+    // Initialize all elements to null (0)
+    std::memset(TableElemStart, 0, TableInst.CurSize * sizeof(uint64_t));
+#else
     std::memset(TableElemStart, -1, TableInst.CurSize * sizeof(uint32_t));
+#endif
     TableInst.Elements = TableElemStart;
+#ifdef ZEN_ENABLE_REFERENCE_TYPES
+    TableElemStart += TableInst.CurSize;
+#else
+    TableElemStart += TableInst.CurSize;
+#endif
   }
 
   for (uint32_t I = 0; I < Mod.NumElementSegments; ++I) {
@@ -186,8 +209,15 @@ void Instantiator::instantiateTables(Instance &Inst) {
 #endif
     }
 
+#ifdef ZEN_ENABLE_REFERENCE_TYPES
+    // For reference types, store FuncIdx + 1 to distinguish from null
+    for (uint32_t J = 0; J < NumFuncIdxs; ++J) {
+      TableInst.Elements[Offset + J] = (uint64_t)Element.FuncIdxs[J] + 1;
+    }
+#else
     std::memcpy(TableInst.Elements + Offset, Element.FuncIdxs,
                 NumFuncIdxs * sizeof(uint32_t));
+#endif
   }
 }
 

@@ -26,6 +26,7 @@ enum class WASMType : uint8_t {
   F32,
   F64,
   FUNCREF,
+  EXTERNREF,
   ANY,
   ERROR_TYPE
 };
@@ -236,6 +237,8 @@ static inline uint32_t getWASMTypeSize(WASMType Type) {
   case WASMType::I64:
   case WASMType::F64:
     return 8;
+  case WASMType::FUNCREF:
+  case WASMType::EXTERNREF:
   case WASMType::ANY:
     return 4;
   default:
@@ -258,6 +261,10 @@ static inline uint32_t getWASMTypeCellNum(WASMType Type) {
     return 1;
   case WASMType::I64:
   case WASMType::F64:
+    return 2;
+  case WASMType::FUNCREF:
+  case WASMType::EXTERNREF:
+    // Reference types are stored as 64-bit values (2 cells)
     return 2;
   default:
     ZEN_ABORT();
@@ -304,6 +311,10 @@ template <WASMType type> constexpr bool isWASMTypeFloat() {
 
 template <WASMType type> constexpr bool isWASMTypeVector() {
   return getWASMTypeKind<type>() == WASMTypeKind::VECTOR;
+}
+
+static inline bool isWASMTypeRefType(WASMType Type) {
+  return Type == WASMType::FUNCREF || Type == WASMType::EXTERNREF;
 }
 
 // ============================================================================

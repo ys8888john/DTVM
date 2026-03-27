@@ -290,6 +290,23 @@ const uint8_t *skipCurrentBlock(const uint8_t *Ip, const uint8_t *End) {
     case I64_EXTEND32_S:
       break;
 
+    // Reference types opcodes
+    case REF_NULL:
+      ++Ip; // Skip reftype byte
+      break;
+
+    case REF_IS_NULL:
+      break;
+
+    case REF_FUNC:
+      Ip = skipLEBNumber<uint32_t>(Ip, End); // Skip funcidx
+      break;
+
+    case TABLE_GET:
+    case TABLE_SET:
+      Ip = skipLEBNumber<uint32_t>(Ip, End); // Skip tableidx
+      break;
+
     } // switch opcode
   }   // while ip < end
   return nullptr;

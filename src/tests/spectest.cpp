@@ -98,9 +98,35 @@ std::vector<TypedValue> parseValueList(const rapidjson::Value &Args) {
     if (ValueNode.IsString()) {
       const auto &Value = ValueNode.Get<std::string>();
       if (Type == "externref"sv) {
-        ZEN_ASSERT_TODO();
+        // externref null is represented as "null" or a numeric value
+        if (Value == "null"sv) {
+          // Null externref (represented as 0)
+          Result.emplace_back(uint64_t(0), WASMType::EXTERNREF);
+        } else {
+          // Non-null externref (host-provided value)
+          uint64_t Val = std::stoull(Value);
+          Result.emplace_back(Val, WASMType::EXTERNREF);
+        }
       } else if (Type == "funcref"sv) {
-        ZEN_ASSERT_TODO();
+        // funcref null is represented as "null" or "func idx"
+        if (Value == "null"sv) {
+          // Null funcref (represented as 0)
+          Result.emplace_back(uint64_t(0), WASMType::FUNCREF);
+        } else if (Value.find("func"sv) == 0) {
+          // Function reference like "func 0"
+          size_t SpacePos = Value.find(' ');
+          if (SpacePos != std::string::npos) {
+            uint32_t FuncIdx = std::stoul(Value.substr(SpacePos + 1));
+            // Store FuncIdx + 1 to distinguish from null
+            Result.emplace_back(uint64_t(FuncIdx) + 1, WASMType::FUNCREF);
+          } else {
+            Result.emplace_back(uint64_t(0), WASMType::FUNCREF);
+          }
+        } else {
+          // Numeric value
+          uint64_t Val = std::stoull(Value);
+          Result.emplace_back(Val, WASMType::FUNCREF);
+        }
       } else if (Type == "i32"sv) {
         uint32_t Val = std::stoul(Value);
         int32_t I32 = 0;
@@ -209,9 +235,35 @@ bool SpecTest::compare(const std::pair<std::string, std::string> &Expected,
     ZEN_ASSERT_TODO();
 
   } else if (ExceptedTypeStr == "funcref"sv) {
-    ZEN_ASSERT_TODO();
+    if (GotType != WASMType::FUNCREF) {
+      return false;
+    }
+    // funcref null check
+    if (ExceptedValStr == "null"sv) {
+      return GotVal.I64 == 0;
+    }
+    // funcref with function index like "func 0"
+    if (ExceptedValStr.find("func"sv) == 0) {
+      size_t SpacePos = ExceptedValStr.find(' ');
+      if (SpacePos != std::string::npos) {
+        uint32_t ExpectedFuncIdx =
+            std::stoul(ExceptedValStr.substr(SpacePos + 1));
+        // Stored value is FuncIdx + 1
+        return uint64_t(ExpectedFuncIdx) + 1 == uint64_t(GotVal.I64);
+      }
+    }
+    // Numeric comparison
+    return std::stoull(ExceptedValStr) == uint64_t(GotVal.I64);
   } else if (ExceptedTypeStr == "externref"sv) {
-    ZEN_ASSERT_TODO();
+    if (GotType != WASMType::EXTERNREF) {
+      return false;
+    }
+    // externref null check
+    if (ExceptedValStr == "null"sv) {
+      return GotVal.I64 == 0;
+    }
+    // Numeric comparison
+    return std::stoull(ExceptedValStr) == uint64_t(GotVal.I64);
   } else if (ExceptedTypeStr == "i32"sv) {
     if (GotType != WASMType::I32) {
       return false;
