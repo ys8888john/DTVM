@@ -894,18 +894,15 @@ void FunctionLoader::load() {
       if (!Mod.isValidTable(TableIdx)) {
         throw getError(ErrorCode::UnknownTable);
       }
-#ifdef ZEN_ENABLE_REFERENCE_TYPES
       // Get table element type from module
       WASMType ElementType = WASMType::FUNCREF; // default
-      if (TableIdx < Mod.getNumImportTables()) {
-        // For import tables, default to funcref
-        // The actual element type checking would need more infrastructure
-      } else {
-        uint32_t InternalTableIdx = TableIdx - Mod.getNumImportTables();
+      if (TableIdx >= Mod.NumImportTables) {
+        // For internal tables, get the element type
+        uint32_t InternalTableIdx = TableIdx - Mod.NumImportTables;
         const auto &Table = Mod.InternalTableTable[InternalTableIdx];
         ElementType = Table.ElementType;
       }
-#endif
+      // For import tables, default to funcref (no element type stored)
       if (Opcode == TABLE_GET) {
         popValueType(WASMType::I32); // index
         pushValueType(ElementType);
