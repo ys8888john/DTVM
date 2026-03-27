@@ -2137,7 +2137,7 @@ void BaseInterpreterImpl::interpret() {
 #ifdef ZEN_ENABLE_REFERENCE_TYPES
         uint32_t TableIdx = 0;
         Ip = readSafeLEBNumber(Ip, TableIdx);
-        if (TableIdx >= ModInst->NumTotalTables) {
+        if (TableIdx >= Mod->getNumTotalTables()) {
           throw getError(ErrorCode::UnknownTable);
         }
         TableInstance *Table = ModInst->getTableInst(TableIdx);
@@ -2157,7 +2157,7 @@ void BaseInterpreterImpl::interpret() {
 #ifdef ZEN_ENABLE_REFERENCE_TYPES
         uint32_t TableIdx = 0;
         Ip = readSafeLEBNumber(Ip, TableIdx);
-        if (TableIdx >= ModInst->NumTotalTables) {
+        if (TableIdx >= Mod->getNumTotalTables()) {
           throw getError(ErrorCode::UnknownTable);
         }
         TableInstance *Table = ModInst->getTableInst(TableIdx);
