@@ -99,34 +99,40 @@ std::vector<TypedValue> parseValueList(const rapidjson::Value &Args) {
       const auto &Value = ValueNode.Get<std::string>();
       if (Type == "externref"sv) {
         // externref null is represented as "null" or a numeric value
+        uint64_t U64Val = 0;
         if (Value == "null"sv) {
           // Null externref (represented as 0)
-          Result.emplace_back(uint64_t(0), WASMType::EXTERNREF);
+          U64Val = 0;
         } else {
           // Non-null externref (host-provided value)
-          uint64_t Val = std::stoull(Value);
-          Result.emplace_back(Val, WASMType::EXTERNREF);
+          U64Val = std::stoull(Value);
         }
+        int64_t I64Val = 0;
+        std::memcpy(&I64Val, &U64Val, sizeof(int64_t));
+        Result.emplace_back(I64Val, WASMType::EXTERNREF);
       } else if (Type == "funcref"sv) {
         // funcref null is represented as "null" or "func idx"
+        uint64_t U64Val = 0;
         if (Value == "null"sv) {
           // Null funcref (represented as 0)
-          Result.emplace_back(uint64_t(0), WASMType::FUNCREF);
+          U64Val = 0;
         } else if (Value.find("func"sv) == 0) {
           // Function reference like "func 0"
           size_t SpacePos = Value.find(' ');
           if (SpacePos != std::string::npos) {
             uint32_t FuncIdx = std::stoul(Value.substr(SpacePos + 1));
             // Store FuncIdx + 1 to distinguish from null
-            Result.emplace_back(uint64_t(FuncIdx) + 1, WASMType::FUNCREF);
+            U64Val = uint64_t(FuncIdx) + 1;
           } else {
-            Result.emplace_back(uint64_t(0), WASMType::FUNCREF);
+            U64Val = 0;
           }
         } else {
           // Numeric value
-          uint64_t Val = std::stoull(Value);
-          Result.emplace_back(Val, WASMType::FUNCREF);
+          U64Val = std::stoull(Value);
         }
+        int64_t I64Val = 0;
+        std::memcpy(&I64Val, &U64Val, sizeof(int64_t));
+        Result.emplace_back(I64Val, WASMType::FUNCREF);
       } else if (Type == "i32"sv) {
         uint32_t Val = std::stoul(Value);
         int32_t I32 = 0;
