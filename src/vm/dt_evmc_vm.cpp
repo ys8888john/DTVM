@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "dt_evmc_vm.h"
+#include "action/compiler.h"
 #include "common/enums.h"
 #include "common/errors.h"
 #include "evm/interpreter.h"
@@ -10,14 +11,24 @@
 #include "runtime/isolation.h"
 #include "runtime/runtime.h"
 #include "wrapped_host.h"
+#ifdef ZEN_ENABLE_JIT_PRECOMPILE_FALLBACK
+#include "compiler/evm_frontend/evm_analyzer.h"
+#endif // ZEN_ENABLE_JIT_PRECOMPILE_FALLBACK
 #include <algorithm>
 
 #include <evmc/evmc.h>
 #include <evmc/evmc.hpp>
 #include <evmc/helpers.h>
 
+#include <condition_variable>
 #include <cstdlib>
 #include <cstring>
+#include <future>
+#include <mutex>
+#include <optional>
+#include <queue>
+#include <string>
+#include <vector>
 
 #ifdef ZEN_ENABLE_VIRTUAL_STACK
 #include "utils/virtual_stack.h"
@@ -28,6 +39,132 @@ namespace {
 using namespace zen::runtime;
 using namespace zen::common;
 
+// ---- Profile-Guided JIT: tunable parameters ----
+namespace profile {
+// Ring buffer capacity: number of recent global contract call records.
+static constexpr size_t RING_BUFFER_CAPACITY = 10000;
+// JIT trigger conditions: both must be met within the sliding window.
+static constexpr uint64_t JIT_TRIGGER_CALL_COUNT = 32;
+static constexpr uint64_t JIT_TRIGGER_TOTAL_GAS = 100000;
+} // namespace profile
+
+// ---- Profile-Guided JIT: data structures ----
+
+struct CallRecord {
+  std::string ModName;
+  uint64_t GasUsed = 0;
+};
+
+struct ContractProfile {
+  uint64_t WindowCallCount = 0;
+  uint64_t WindowGasUsed = 0;
+  bool JITTriggered = false;
+  bool JITRejected = false;
+};
+
+struct CallRingBuffer {
+  std::vector<CallRecord> Buffer;
+  size_t Head = 0;
+  size_t Count = 0;
+  size_t Capacity;
+
+  explicit CallRingBuffer(size_t Cap) : Buffer(Cap), Capacity(Cap) {}
+
+  std::optional<CallRecord> push(CallRecord NewRecord) {
+    std::optional<CallRecord> Evicted;
+    if (Count == Capacity) {
+      Evicted = std::move(Buffer[Head]);
+    } else {
+      Count++;
+    }
+    Buffer[Head] = std::move(NewRecord);
+    Head = (Head + 1) % Capacity;
+    return Evicted;
+  }
+};
+
+std::string getStableModName(const evmc_message *Msg) {
+  static const char HexChars[] = "0123456789abcdef";
+  std::string Name = "mod_0x";
+  Name.reserve(6 + 40);
+  for (size_t I = 0; I < sizeof(Msg->code_address.bytes); ++I) {
+    uint8_t Byte = Msg->code_address.bytes[I];
+    Name.push_back(HexChars[Byte >> 4]);
+    Name.push_back(HexChars[Byte & 0x0F]);
+  }
+  return Name;
+}
+
+// ---- JIT Compile Thread Pool ----
+// A simple fixed-size thread pool for background JIT compilation tasks.
+// Limits the number of concurrent compilations to avoid resource exhaustion.
+class JITCompilePool {
+public:
+  explicit JITCompilePool(uint32_t NumThreads) : Shutdown(false) {
+    for (uint32_t I = 0; I < NumThreads; ++I) {
+      Workers.emplace_back([this]() { workerLoop(); });
+    }
+  }
+
+  ~JITCompilePool() {
+    {
+      std::lock_guard<std::mutex> Lock(QueueMutex);
+      Shutdown = true;
+    }
+    QueueCV.notify_all();
+    for (auto &Worker : Workers) {
+      Worker.join();
+    }
+  }
+
+  // Submit a compilation task. Returns a future that completes when
+  // the task finishes. The caller can use future.valid()/wait() to
+  // check or wait for completion.
+  std::future<void> submit(std::function<void()> Task) {
+    auto Promise = std::make_shared<std::promise<void>>();
+    std::future<void> Future = Promise->get_future();
+    {
+      std::lock_guard<std::mutex> Lock(QueueMutex);
+      TaskQueue.push(
+          [Task = std::move(Task), Promise = std::move(Promise)]() mutable {
+            try {
+              Task();
+              Promise->set_value();
+            } catch (...) {
+              Promise->set_exception(std::current_exception());
+            }
+          });
+    }
+    QueueCV.notify_one();
+    return Future;
+  }
+
+  // Non-copyable, non-movable.
+  JITCompilePool(const JITCompilePool &) = delete;
+  JITCompilePool &operator=(const JITCompilePool &) = delete;
+
+private:
+  void workerLoop() {
+    while (true) {
+      std::function<void()> Task;
+      {
+        std::unique_lock<std::mutex> Lock(QueueMutex);
+        QueueCV.wait(Lock, [this]() { return Shutdown || !TaskQueue.empty(); });
+        if (Shutdown && TaskQueue.empty())
+          return;
+        Task = std::move(TaskQueue.front());
+        TaskQueue.pop();
+      }
+      Task();
+    }
+  }
+
+  std::vector<std::thread> Workers;
+  std::queue<std::function<void()>> TaskQueue;
+  std::mutex QueueMutex;
+  std::condition_variable QueueCV;
+  bool Shutdown;
+};
 // RAII helper for temporarily changing runtime configuration
 class ScopedConfig {
 public:
@@ -154,7 +291,9 @@ bool parseBoolEnvValue(const char *Value, bool &ParsedValue) {
 struct DTVM : evmc_vm {
   DTVM();
   ~DTVM() {
-    // Clean up cached instance first (before modules it may reference)
+    // Drain the JIT compile thread pool first: wait for all in-flight
+    // compilation tasks to finish before unloading modules they reference.
+    CompilePool.reset();
     if (CachedMainInst && Iso) {
       Iso->deleteEVMInstance(CachedMainInst);
       CachedMainInst = nullptr;
@@ -210,6 +349,12 @@ struct DTVM : evmc_vm {
   // Instance pool for depth > 0
   std::vector<EVMInstance *> CacheInsts;
 
+  // ---- Profile-guided JIT state ----
+  std::unordered_map<std::string, ContractProfile> ProfileStore;
+  CallRingBuffer RingBuffer{profile::RING_BUFFER_CAPACITY};
+  // Thread pool for background JIT compilation (lazily initialized).
+  std::unique_ptr<JITCompilePool> CompilePool;
+
   bool isModuleInUse(const EVMModule *Mod) const {
     if (CachedMainInst && CachedMainInst->getModule() == Mod)
       return true;
@@ -264,6 +409,22 @@ enum evmc_set_option_result set_option(evmc_vm *VMInstance, const char *Name,
     } else {
       return EVMC_SET_OPTION_INVALID_VALUE;
     }
+#ifdef ZEN_ENABLE_MULTIPASS_JIT
+  } else if (std::strcmp(Name, "num_jit_compile_threads") == 0) {
+    int Parsed = std::atoi(Value);
+    if (Parsed > 0 && Parsed <= 256) {
+      VM->Config.NumJITCompileThreads = static_cast<uint32_t>(Parsed);
+      return EVMC_SET_OPTION_SUCCESS;
+    }
+    return EVMC_SET_OPTION_INVALID_VALUE;
+  } else if (std::strcmp(Name, "profile_guided_jit") == 0) {
+    bool Parsed = false;
+    if (parseBoolEnvValue(Value, Parsed)) {
+      VM->Config.EnableProfileGuidedJIT = Parsed;
+      return EVMC_SET_OPTION_SUCCESS;
+    }
+    return EVMC_SET_OPTION_INVALID_VALUE;
+#endif
   }
   return EVMC_SET_OPTION_INVALID_NAME;
 }
@@ -281,6 +442,15 @@ bool ensureRuntimeAndIsolation(DTVM *VM) {
       return false;
   }
   return true;
+}
+
+/// Lazily initialize the JIT compile thread pool.
+JITCompilePool &getOrCreateCompilePool(DTVM *VM) {
+  if (!VM->CompilePool) {
+    VM->CompilePool =
+        std::make_unique<JITCompilePool>(VM->Config.NumJITCompileThreads);
+  }
+  return *VM->CompilePool;
 }
 
 bool shouldUsePersistentModuleCache(const evmc_message *Msg) {
@@ -390,6 +560,7 @@ EVMModule *findModuleCached(DTVM *VM, const uint8_t *Code, size_t CodeSize,
     if (!ModRet)
       return nullptr;
     Mod = *ModRet;
+
     VM->LRUOrder.push_front(AddrKey);
     VM->AddrCache[AddrKey] = {Mod, VM->LRUOrder.begin()};
   }
@@ -398,7 +569,8 @@ EVMModule *findModuleCached(DTVM *VM, const uint8_t *Code, size_t CodeSize,
   // these state variables for two reasons:
   // 1. Eviction tracking: If a stale L1 entry is replaced, we need to
   // invalidate
-  //    L0Mod if it pointed to the old module (done in the eviction path above).
+  //    L0Mod if it pointed to the old module (done in the eviction path
+  //    above).
   // 2. Future extensibility: It keeps the door open for re-enabling L0 later
   //    with a safer validation scheme (e.g., pointer + size + hash).
   VM->LastCodePtr = Code;
@@ -530,6 +702,84 @@ evmc_result executeInterpreterFastPath(DTVM *VM,
   return Result.release_raw();
 }
 
+/// Profile-guided JIT: record call and check if JIT should be triggered.
+/// Called after execution completes with the result available.
+#ifdef ZEN_ENABLE_MULTIPASS_JIT
+void updateProfileAndMaybeTriggerJIT(DTVM *VM, const evmc_message *Msg,
+                                     const evmc_result &Result,
+                                     EVMModule *Mod) {
+  std::string ModName = getStableModName(Msg);
+  uint64_t GasUsed = static_cast<uint64_t>(Msg->gas - Result.gas_left);
+
+  // 1. Push new record; may evict the oldest record.
+  CallRecord NewRecord{ModName, GasUsed};
+  auto Evicted = VM->RingBuffer.push(std::move(NewRecord));
+
+  // 2. Process evicted record: decrement its profile counters.
+  if (Evicted) {
+    auto EvictIt = VM->ProfileStore.find(Evicted->ModName);
+    if (EvictIt != VM->ProfileStore.end()) {
+      auto &OldProfile = EvictIt->second;
+      if (OldProfile.WindowCallCount > 0)
+        OldProfile.WindowCallCount--;
+      if (OldProfile.WindowGasUsed >= Evicted->GasUsed)
+        OldProfile.WindowGasUsed -= Evicted->GasUsed;
+      else
+        OldProfile.WindowGasUsed = 0;
+
+      // Clean up zero-count profiles that have not been evaluated.
+      if (OldProfile.WindowCallCount == 0 && !OldProfile.JITTriggered &&
+          !OldProfile.JITRejected) {
+        VM->ProfileStore.erase(EvictIt);
+      }
+    }
+  }
+
+  // 3. Skip profile update for contracts already evaluated.
+  auto ExistIt = VM->ProfileStore.find(ModName);
+  if (ExistIt != VM->ProfileStore.end() &&
+      (ExistIt->second.JITTriggered || ExistIt->second.JITRejected)) {
+    return;
+  }
+
+  // 4. Update current contract profile (increment).
+  auto &CurrentProfile = VM->ProfileStore[ModName];
+  CurrentProfile.WindowCallCount++;
+  CurrentProfile.WindowGasUsed += GasUsed;
+
+  // 5. Check JIT trigger conditions.
+  if (CurrentProfile.WindowCallCount < profile::JIT_TRIGGER_CALL_COUNT ||
+      CurrentProfile.WindowGasUsed < profile::JIT_TRIGGER_TOTAL_GAS) {
+    return;
+  }
+
+#ifdef ZEN_ENABLE_JIT_PRECOMPILE_FALLBACK
+  // Static analysis gate: reject contracts unsuitable for JIT.
+  COMPILER::EVMAnalyzer Analyzer(Mod->getRevision());
+  Analyzer.analyze(reinterpret_cast<const uint8_t *>(Mod->Code), Mod->CodeSize);
+  if (Analyzer.getJITSuitability().ShouldFallback) {
+    CurrentProfile.JITRejected = true;
+    return;
+  }
+#endif // ZEN_ENABLE_JIT_PRECOMPILE_FALLBACK
+
+  // Avoid duplicate JIT triggers.
+  if ((Mod->JITCompileFuture.valid() &&
+       Mod->JITCompileFuture.wait_for(std::chrono::seconds(0)) !=
+           std::future_status::ready) ||
+      Mod->getJITCode()) {
+    CurrentProfile.JITTriggered = true;
+    return;
+  }
+
+  // Trigger background JIT compilation via thread pool.
+  CurrentProfile.JITTriggered = true;
+  auto &Pool = getOrCreateCompilePool(VM);
+  Mod->JITCompileFuture =
+      Pool.submit([Mod]() { zen::action::performEVMJITCompile(*Mod); });
+}
+#endif // ZEN_ENABLE_MULTIPASS_JIT
+
 #ifdef ZEN_ENABLE_JIT
 
 #ifdef ZEN_ENABLE_VIRTUAL_STACK
@@ -630,8 +880,92 @@ evmc_result execute(evmc_vm *EVMInstance, const evmc_host_interface *Host,
                                       CodeSize);
   }
 
+#ifdef ZEN_ENABLE_MULTIPASS_JIT
+  // Profile-guided JIT: use interpreter with profiling when JIT not ready,
+  // then switch to JIT once compiled.
+  if (VM->Config.EnableProfileGuidedJIT) {
+    // RAII guard for host context save/restore (exception safety)
+    HostContextScope HostScope(VM->ExecHost.get(), Host, Context);
+
+    if (!ensureRuntimeAndIsolation(VM)) {
+      return evmc_make_result(EVMC_FAILURE, 0, 0, nullptr, 0);
+    }
+
+    // Module lookup: L1 address-based cache -> Cold load
+    bool IsTransientMod = false;
+    EVMModule *Mod =
+        findModuleCached(VM, Code, CodeSize, Rev, Msg, IsTransientMod);
+    if (!Mod) {
+      return evmc_make_result(EVMC_FAILURE, 0, 0, nullptr, 0);
+    }
+    ModuleGuard ModGuard(VM, Mod, IsTransientMod);
+
+    // Instance reuse (shared only for cacheable top-level calls)
+    auto *TheInst = getOrCreateInstance(VM, Mod, Rev, Msg->depth);
+    if (!TheInst) {
+      return evmc_make_result(EVMC_FAILURE, 0, 0, nullptr, 0);
+    }
+
+    if (!Mod->getJITCode()) {
+      // JIT not ready: run interpreter with profiling
+      (void)Mod->getBytecodeCache();
+
+      evmc_message MsgWithCode = *Msg;
+      MsgWithCode.code = reinterpret_cast<uint8_t *>(Mod->Code);
+      MsgWithCode.code_size = Mod->CodeSize;
+      TheInst->setExeResult(evmc::Result{EVMC_SUCCESS, 0, 0});
+      TheInst->pushMessage(&MsgWithCode);
+
+      const bool ReuseCachedInstance = !IsTransientMod && Msg->depth == 0;
+
+      std::unique_ptr<zen::evm::InterpreterExecContext> TempCtx;
+      zen::evm::InterpreterExecContext *CtxPtr = nullptr;
+      if (!ReuseCachedInstance) {
+        TempCtx = std::make_unique<zen::evm::InterpreterExecContext>(TheInst);
+        CtxPtr = TempCtx.get();
+      } else {
+        if (!VM->CachedCtx) {
+          VM->CachedCtx =
+              std::make_unique<zen::evm::InterpreterExecContext>(TheInst);
+        } else {
+          VM->CachedCtx->resetForNewCall(TheInst);
+        }
+        CtxPtr = VM->CachedCtx.get();
+      }
+
+      auto &Ctx = *CtxPtr;
+      zen::evm::BaseInterpreter Interpreter(Ctx);
+      Ctx.allocTopFrame(&MsgWithCode);
+      Interpreter.interpret();
+
+      evmc::Result Result =
+          std::move(const_cast<evmc::Result &>(Ctx.getExeResult()));
+      Result.gas_left = TheInst->getGas();
+
+      evmc_result RawResult = Result.release_raw();
+
+      if (shouldUsePersistentModuleCache(Msg)) {
+        updateProfileAndMaybeTriggerJIT(VM, Msg, RawResult, Mod);
+      }
+
+      return RawResult;
+    }
+
+    // JIT code ready: execute via callEVMMain, continue profiling
+    evmc_message Message = *Msg;
+    evmc::Result Result;
+    VM->RT->callEVMMain(*TheInst, Message, Result);
+
+    evmc_result RawResult = Result.release_raw();
+    if (shouldUsePersistentModuleCache(Msg)) {
+      updateProfileAndMaybeTriggerJIT(VM, Msg, RawResult, Mod);
+    }
+    return RawResult;
+  }
+#endif // ZEN_ENABLE_MULTIPASS_JIT
+
 #ifdef ZEN_ENABLE_JIT
-  // JIT mode: use optimized fast path (bypasses callEVMMain/virtual stack)
+  // Non-PGJ JIT mode: use optimized fast path
   return executeMultipassFastPath(VM, Host, Context, Rev, Msg, Code, CodeSize);
 #else
   return evmc_make_result(EVMC_FAILURE, 0, 0, nullptr, 0);

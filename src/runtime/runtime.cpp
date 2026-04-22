@@ -720,14 +720,19 @@ void Runtime::callEVMMainOnPhysStack(EVMInstance &Inst, evmc_message &Msg,
   MsgWithCode.code_size = Inst.getModule()->CodeSize;
   Inst.setExeResult(evmc::Result{EVMC_SUCCESS, 0, 0});
   Inst.pushMessage(&MsgWithCode);
-  if (getConfig().Mode == RunMode::InterpMode) {
-    callEVMInInterpMode(Inst, MsgWithCode, Result);
-  } else {
+
+  bool UseJIT = false;
+#ifdef ZEN_ENABLE_JIT
+  UseJIT = (getConfig().Mode != RunMode::InterpMode) &&
+           Inst.getModule()->getJITCode();
+#endif
+
+  if (UseJIT) {
 #ifdef ZEN_ENABLE_JIT
     callEVMInJITMode(Inst, MsgWithCode, Result);
-#else
-    ZEN_UNREACHABLE();
 #endif
+  } else {
+    callEVMInInterpMode(Inst, MsgWithCode, Result);
   }
   Result.gas_left = Inst.getGas();
 }

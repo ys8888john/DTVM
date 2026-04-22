@@ -60,6 +60,12 @@ EVMModule::EVMModule(Runtime *RT)
 }
 
 EVMModule::~EVMModule() {
+#ifdef ZEN_ENABLE_JIT
+  if (JITCompileFuture.valid()) {
+    JITCompileFuture.wait();
+  }
+#endif
+
   if (Name) {
     this->freeSymbol(Name);
     Name = common::WASM_SYMBOL_NULL;
@@ -99,20 +105,30 @@ EVMModuleUniquePtr EVMModule::newEVMModule(Runtime &RT,
   Mod->Host = RT.getEVMHost();
 
   if (RT.getConfig().Mode != common::RunMode::InterpMode) {
-#ifdef ZEN_ENABLE_JIT_PRECOMPILE_FALLBACK
-    // Run the EVMAnalyzer once at module creation to determine if this
-    // contract should fall back to interpreter. This avoids per-call O(n)
-    // bytecode scans in the execute() hot path.
-    COMPILER::EVMAnalyzer Analyzer(Rev);
-    Analyzer.analyze(reinterpret_cast<const uint8_t *>(Mod->Code),
-                     Mod->CodeSize);
-    Mod->ShouldFallbackToInterp =
-        Analyzer.getJITSuitability().ShouldFallback ||
-        hasUnresolvedCompatibleDynamicReturnTrampoline(Analyzer);
-    if (!Mod->ShouldFallbackToInterp)
-#endif // ZEN_ENABLE_JIT_PRECOMPILE_FALLBACK
+#ifdef ZEN_ENABLE_MULTIPASS_JIT
+    if (RT.getConfig().EnableProfileGuidedJIT) {
+      // Profile-guided JIT: skip JIT compilation at load time.
+      // JIT will be triggered later by the profiling logic in execute().
+      // Eagerly init bytecode cache for interpreter use.
+      (void)Mod->getBytecodeCache();
+    } else
+#endif
     {
-      action::performEVMJITCompile(*Mod);
+#ifdef ZEN_ENABLE_JIT_PRECOMPILE_FALLBACK
+      // Run the EVMAnalyzer once at module creation to determine if this
+      // contract should fall back to interpreter. This avoids per-call O(n)
+      // bytecode scans in the execute() hot path.
+      COMPILER::EVMAnalyzer Analyzer(Rev);
+      Analyzer.analyze(reinterpret_cast<const uint8_t *>(Mod->Code),
+                       Mod->CodeSize);
+      Mod->ShouldFallbackToInterp =
+          Analyzer.getJITSuitability().ShouldFallback ||
+          hasUnresolvedCompatibleDynamicReturnTrampoline(Analyzer);
+      if (!Mod->ShouldFallbackToInterp)
+#endif // ZEN_ENABLE_JIT_PRECOMPILE_FALLBACK
+      {
+        action::performEVMJITCompile(*Mod);
+      }
     }
   }
 

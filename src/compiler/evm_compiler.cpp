@@ -56,26 +56,27 @@ void EVMJITCompiler::compileEVMToMC(EVMFrontendContext &Ctx, MModule &Mod,
 }
 
 void EagerEVMJITCompiler::compile() {
-  auto Timer = Stats.startRecord(zen::utils::StatisticPhase::JITCompilation);
+  try {
+    auto Timer = Stats.startRecord(zen::utils::StatisticPhase::JITCompilation);
 
-  EVMFrontendContext Ctx;
-  Ctx.setGasMeteringEnabled(Config.EnableEvmGasMetering);
+    EVMFrontendContext Ctx;
+    Ctx.setGasMeteringEnabled(Config.EnableEvmGasMetering);
 #ifdef ZEN_ENABLE_EVM_GAS_REGISTER
-  Ctx.setGasRegisterEnabled(true);
+    Ctx.setGasRegisterEnabled(true);
 #endif
-  Ctx.setRevision(EVMMod->getRevision());
-  Ctx.setBytecode(reinterpret_cast<const Byte *>(EVMMod->Code),
-                  EVMMod->CodeSize);
-  const auto &Cache = EVMMod->getBytecodeCache();
-  Ctx.setGasChunkInfo(Cache.GasChunkEnd.data(), Cache.GasChunkCost.data(),
-                      EVMMod->CodeSize);
+    Ctx.setRevision(EVMMod->getRevision());
+    Ctx.setBytecode(reinterpret_cast<const Byte *>(EVMMod->Code),
+                    EVMMod->CodeSize);
+    const auto &Cache = EVMMod->getBytecodeCache();
+    Ctx.setGasChunkInfo(Cache.GasChunkEnd.data(), Cache.GasChunkCost.data(),
+                        EVMMod->CodeSize);
 
-  MModule Mod(Ctx);
-  buildEVMFunction(Ctx, Mod, *EVMMod);
-  Ctx.CodeMPool = &EVMMod->getJITCodeMemPool();
+    MModule Mod(Ctx);
+    buildEVMFunction(Ctx, Mod, *EVMMod);
+    Ctx.CodeMPool = &EVMMod->getJITCodeMemPool();
 
 #ifdef ZEN_ENABLE_LINUX_PERF
-  utils::JitDumpWriter JitDumpWriter;
+    utils::JitDumpWriter JitDumpWriter;
 #define JIT_DUMP_WRITE_FUNC(FuncName, FuncAddr, FuncSize)                      \
   JitDumpWriter.writeFunc(FuncName, reinterpret_cast<uint64_t>(FuncAddr),      \
                           FuncSize)
@@ -83,32 +84,39 @@ void EagerEVMJITCompiler::compile() {
 #define JIT_DUMP_WRITE_FUNC(...)
 #endif // ZEN_ENABLE_LINUX_PERF
 
-  auto &CodeMPool = EVMMod->getJITCodeMemPool();
-  uint8_t *JITCode = const_cast<uint8_t *>(CodeMPool.getMemStart());
+    auto &CodeMPool = EVMMod->getJITCodeMemPool();
+    uint8_t *JITCode = const_cast<uint8_t *>(CodeMPool.getMemStart());
 
-  // EVM has only 1 function, use direct single-threaded compilation
-  compileEVMToMC(Ctx, Mod, 0, Config.DisableMultipassGreedyRA);
-  emitObjectBuffer(&Ctx);
-  ZEN_ASSERT(Ctx.ExternRelocs.empty());
+    // EVM has only 1 function, use direct single-threaded compilation
+    compileEVMToMC(Ctx, Mod, 0, Config.DisableMultipassGreedyRA);
+    emitObjectBuffer(&Ctx);
+    ZEN_ASSERT(Ctx.ExternRelocs.empty());
 
-  uint8_t *JITFuncPtr = Ctx.CodePtr + Ctx.FuncOffsetMap[0];
-  EVMMod->setJITCodeAndSize(JITFuncPtr, Ctx.CodeSize);
+    uint8_t *JITFuncPtr = Ctx.CodePtr + Ctx.FuncOffsetMap[0];
 #ifdef ZEN_ENABLE_LINUX_PERF
-  // Write block symbols instead of EVM_Main
-  // JIT_DUMP_WRITE_FUNC("EVM_Main", JITFuncPtr, Ctx.FuncSizeMap[0]);
-  for (const auto &[BBIdx, BBSymOffset] : Ctx.FuncOffsetMap) {
-    if (BBIdx == 0) {
-      continue;
+    // Write block symbols instead of EVM_Main
+    // JIT_DUMP_WRITE_FUNC("EVM_Main", JITFuncPtr, Ctx.FuncSizeMap[0]);
+    for (const auto &[BBIdx, BBSymOffset] : Ctx.FuncOffsetMap) {
+      if (BBIdx == 0) {
+        continue;
+      }
+      uint8_t *BBCode = Ctx.CodePtr + BBSymOffset;
+      JIT_DUMP_WRITE_FUNC(Ctx.FuncNameMap[BBIdx], BBCode,
+                          Ctx.FuncSizeMap[BBIdx]);
     }
-    uint8_t *BBCode = Ctx.CodePtr + BBSymOffset;
-    JIT_DUMP_WRITE_FUNC(Ctx.FuncNameMap[BBIdx], BBCode, Ctx.FuncSizeMap[BBIdx]);
-  }
 #endif
-  size_t CodeSize = CodeMPool.getMemEnd() - JITCode;
-  platform::mprotect(JITCode, TO_MPROTECT_CODE_SIZE(CodeSize),
-                     PROT_READ | PROT_EXEC);
-  EVMMod->setJITCodeAndSize(JITCode, CodeSize);
+    size_t CodeSize = CodeMPool.getMemEnd() - JITCode;
+    platform::mprotect(JITCode, TO_MPROTECT_CODE_SIZE(CodeSize),
+                       PROT_READ | PROT_EXEC);
+    // Publish JITCode only after mprotect — atomic release ensures the
+    // interpreter thread sees fully executable code.
+    EVMMod->setJITCodeAndSize(JITFuncPtr, CodeSize);
 
-  Stats.stopRecord(Timer);
+    Stats.stopRecord(Timer);
+  } catch (const std::exception &E) {
+    ZEN_LOG_ERROR("EVM JIT compilation failed: %s", E.what());
+  } catch (...) {
+    ZEN_LOG_ERROR("EVM JIT compilation failed");
+  }
 }
 } // namespace COMPILER
