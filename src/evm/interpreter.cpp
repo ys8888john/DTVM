@@ -1305,8 +1305,11 @@ void BaseInterpreter::interpret() {
           goto cgoto_error;
         }
         const uint64_t Offset64 = static_cast<uint64_t>(OffsetVal);
-        // Size = 1, no overflow possible for Offset64 + 1 unless Offset64
-        // == UINT64_MAX which would have failed the previous check.
+        if (INTX_UNLIKELY(Offset64 >
+                          std::numeric_limits<uint64_t>::max() - 1)) {
+          Context.setStatus(EVMC_OUT_OF_GAS);
+          goto cgoto_error;
+        }
         const uint64_t NewSize = Offset64 + 1;
         if (INTX_UNLIKELY(NewSize > MAX_REQUIRED_MEMORY_SIZE)) {
           Context.setStatus(EVMC_OUT_OF_GAS);
