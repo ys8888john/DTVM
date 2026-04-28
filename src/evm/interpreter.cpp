@@ -982,24 +982,92 @@ void BaseInterpreter::interpret() {
         HANDLER_CALL(CallerHandler::doExecute());
       TARGET_CALLVALUE:
         HANDLER_CALL(CallValueHandler::doExecute());
-      TARGET_CALLDATALOAD:
-        HANDLER_CALL(CallDataLoadHandler::doExecute());
-      TARGET_CALLDATASIZE:
-        HANDLER_CALL(CallDataSizeHandler::doExecute());
+      // ---- Inlined: CALLDATALOAD / CALLDATASIZE / CODESIZE ----
+      // Pure reads of Frame->Msg.input_* and the local CodeSize. No
+      // host call, no gas math, no memory mutation.
+      // CALLDATALOAD edge: when Offset > input_size we must NOT memcpy
+      // (input_data may legitimately be nullptr when input_size==0,
+      // e.g. CREATE frames; UB on memcpy(_, nullptr, 0) under ASAN).
+      TARGET_CALLDATALOAD : {
+        if (INTX_UNLIKELY(sp < 1)) {
+          Context.setStatus(EVMC_STACK_UNDERFLOW);
+          goto cgoto_error;
+        }
+        const intx::uint256 OffsetVal = Frame->Stack[sp - 1];
+        const size_t InputSize = Frame->Msg.input_size;
+        if (OffsetVal > intx::uint256(InputSize)) {
+          Frame->Stack[sp - 1] = intx::uint256(0);
+        } else {
+          // OffsetVal <= InputSize fits safely in size_t.
+          const uint64_t Offset = static_cast<uint64_t>(OffsetVal);
+          const size_t Avail = InputSize - static_cast<size_t>(Offset);
+          uint8_t DataBytes[32] = {0};
+          const size_t CopyLen = Avail < 32 ? Avail : 32;
+          if (CopyLen > 0) {
+            // Avail > 0 implies Offset < InputSize, so input_data is
+            // dereferenced only for a non-empty calldata buffer.
+            std::memcpy(DataBytes, Frame->Msg.input_data + Offset, CopyLen);
+          }
+          Frame->Stack[sp - 1] = intx::be::load<intx::uint256>(DataBytes);
+        }
+        ++Pc;
+        DISPATCH_NEXT;
+      }
+      TARGET_CALLDATASIZE : {
+        if (INTX_UNLIKELY(sp >= MAXSTACK)) {
+          Context.setStatus(EVMC_STACK_OVERFLOW);
+          goto cgoto_error;
+        }
+        Frame->Stack[sp++] = intx::uint256(Frame->Msg.input_size);
+        ++Pc;
+        DISPATCH_NEXT;
+      }
       TARGET_CALLDATACOPY:
         HANDLER_CALL(CallDataCopyHandler::doExecute());
-      TARGET_CODESIZE:
-        HANDLER_CALL(CodeSizeHandler::doExecute());
+      TARGET_CODESIZE : {
+        // CodeSize is captured in the enclosing dispatch loop's local;
+        // the original handler reads the same value via getModule()->CodeSize.
+        if (INTX_UNLIKELY(sp >= MAXSTACK)) {
+          Context.setStatus(EVMC_STACK_OVERFLOW);
+          goto cgoto_error;
+        }
+        Frame->Stack[sp++] = intx::uint256(CodeSize);
+        ++Pc;
+        DISPATCH_NEXT;
+      }
       TARGET_CODECOPY:
         HANDLER_CALL(CodeCopyHandler::doExecute());
-      TARGET_GASPRICE:
-        HANDLER_CALL(GasPriceHandler::doExecute());
+      // ---- Inlined: pure TxContext / ReturnData reads ----
+      // All inlined opcodes below only read Frame->getTxContext() (lazy
+      // loaded into Frame->MTx) or Context.getReturnData(), and push one
+      // value.  No Host call inside the hot path (getTxContext does call
+      // Host->get_tx_context() once on first miss; Frame->Host is lazy
+      // initialized at the top of interpret()).  Conservative: BLOCKHASH
+      // and SELFBALANCE still go through HANDLER_CALL because they call
+      // Host->get_block_hash / Host->get_balance unconditionally.
+      TARGET_GASPRICE : {
+        if (INTX_UNLIKELY(sp >= MAXSTACK)) {
+          Context.setStatus(EVMC_STACK_OVERFLOW);
+          goto cgoto_error;
+        }
+        Frame->Stack[sp++] =
+            intx::be::load<intx::uint256>(Frame->getTxContext().tx_gas_price);
+        ++Pc;
+        DISPATCH_NEXT;
+      }
       TARGET_EXTCODESIZE:
         HANDLER_CALL(ExtCodeSizeHandler::doExecute());
       TARGET_EXTCODECOPY:
         HANDLER_CALL(ExtCodeCopyHandler::doExecute());
-      TARGET_RETURNDATASIZE:
-        HANDLER_CALL(ReturnDataSizeHandler::doExecute());
+      TARGET_RETURNDATASIZE : {
+        if (INTX_UNLIKELY(sp >= MAXSTACK)) {
+          Context.setStatus(EVMC_STACK_OVERFLOW);
+          goto cgoto_error;
+        }
+        Frame->Stack[sp++] = intx::uint256(Context.getReturnData().size());
+        ++Pc;
+        DISPATCH_NEXT;
+      }
       TARGET_RETURNDATACOPY:
         HANDLER_CALL(ReturnDataCopyHandler::doExecute());
       TARGET_EXTCODEHASH:
@@ -1008,50 +1076,346 @@ void BaseInterpreter::interpret() {
       // Block information
       TARGET_BLOCKHASH:
         HANDLER_CALL(BlockHashHandler::doExecute());
-      TARGET_COINBASE:
-        HANDLER_CALL(CoinBaseHandler::doExecute());
-      TARGET_TIMESTAMP:
-        HANDLER_CALL(TimeStampHandler::doExecute());
-      TARGET_NUMBER:
-        HANDLER_CALL(NumberHandler::doExecute());
-      TARGET_PREVRANDAO:
-        HANDLER_CALL(PrevRanDaoHandler::doExecute());
-      TARGET_GASLIMIT:
-        HANDLER_CALL(GasLimitHandler::doExecute());
-      TARGET_CHAINID:
-        HANDLER_CALL(ChainIdHandler::doExecute());
+      TARGET_COINBASE : {
+        if (INTX_UNLIKELY(sp >= MAXSTACK)) {
+          Context.setStatus(EVMC_STACK_OVERFLOW);
+          goto cgoto_error;
+        }
+        Frame->Stack[sp++] =
+            intx::be::load<intx::uint256>(Frame->getTxContext().block_coinbase);
+        ++Pc;
+        DISPATCH_NEXT;
+      }
+      TARGET_TIMESTAMP : {
+        if (INTX_UNLIKELY(sp >= MAXSTACK)) {
+          Context.setStatus(EVMC_STACK_OVERFLOW);
+          goto cgoto_error;
+        }
+        Frame->Stack[sp++] =
+            intx::uint256(Frame->getTxContext().block_timestamp);
+        ++Pc;
+        DISPATCH_NEXT;
+      }
+      TARGET_NUMBER : {
+        if (INTX_UNLIKELY(sp >= MAXSTACK)) {
+          Context.setStatus(EVMC_STACK_OVERFLOW);
+          goto cgoto_error;
+        }
+        Frame->Stack[sp++] = intx::uint256(Frame->getTxContext().block_number);
+        ++Pc;
+        DISPATCH_NEXT;
+      }
+      TARGET_PREVRANDAO : {
+        if (INTX_UNLIKELY(sp >= MAXSTACK)) {
+          Context.setStatus(EVMC_STACK_OVERFLOW);
+          goto cgoto_error;
+        }
+        Frame->Stack[sp++] = intx::be::load<intx::uint256>(
+            Frame->getTxContext().block_prev_randao);
+        ++Pc;
+        DISPATCH_NEXT;
+      }
+      TARGET_GASLIMIT : {
+        if (INTX_UNLIKELY(sp >= MAXSTACK)) {
+          Context.setStatus(EVMC_STACK_OVERFLOW);
+          goto cgoto_error;
+        }
+        Frame->Stack[sp++] =
+            intx::uint256(Frame->getTxContext().block_gas_limit);
+        ++Pc;
+        DISPATCH_NEXT;
+      }
+      TARGET_CHAINID : {
+        if (INTX_UNLIKELY(sp >= MAXSTACK)) {
+          Context.setStatus(EVMC_STACK_OVERFLOW);
+          goto cgoto_error;
+        }
+        Frame->Stack[sp++] =
+            intx::be::load<intx::uint256>(Frame->getTxContext().chain_id);
+        ++Pc;
+        DISPATCH_NEXT;
+      }
       TARGET_SELFBALANCE:
         HANDLER_CALL(SelfBalanceHandler::doExecute());
-      TARGET_BASEFEE:
-        HANDLER_CALL(BaseFeeHandler::doExecute());
-      TARGET_BLOBHASH:
-        HANDLER_CALL(BlobHashHandler::doExecute());
-      TARGET_BLOBBASEFEE:
-        HANDLER_CALL(BlobBaseFeeHandler::doExecute());
+      TARGET_BASEFEE : {
+        if (INTX_UNLIKELY(sp >= MAXSTACK)) {
+          Context.setStatus(EVMC_STACK_OVERFLOW);
+          goto cgoto_error;
+        }
+        Frame->Stack[sp++] =
+            intx::be::load<intx::uint256>(Frame->getTxContext().block_base_fee);
+        ++Pc;
+        DISPATCH_NEXT;
+      }
+      TARGET_BLOBHASH : {
+        // BLOBHASH: pop one (index), push the indexed blob hash, or 0 if
+        // out of range.  No Host call.
+        if (INTX_UNLIKELY(sp < 1)) {
+          Context.setStatus(EVMC_STACK_UNDERFLOW);
+          goto cgoto_error;
+        }
+        const intx::uint256 IndexVal = Frame->Stack[sp - 1];
+        const auto &Tx = Frame->getTxContext();
+        if (IndexVal >= intx::uint256(Tx.blob_hashes_count)) {
+          Frame->Stack[sp - 1] = intx::uint256(0);
+        } else {
+          // IndexVal fits in uint64_t since it's < blob_hashes_count
+          // (a size_t).
+          const uint64_t Index = static_cast<uint64_t>(IndexVal);
+          Frame->Stack[sp - 1] =
+              intx::be::load<intx::uint256>(Tx.blob_hashes[Index]);
+        }
+        ++Pc;
+        DISPATCH_NEXT;
+      }
+      TARGET_BLOBBASEFEE : {
+        if (INTX_UNLIKELY(sp >= MAXSTACK)) {
+          Context.setStatus(EVMC_STACK_OVERFLOW);
+          goto cgoto_error;
+        }
+        Frame->Stack[sp++] =
+            intx::be::load<intx::uint256>(Frame->getTxContext().blob_base_fee);
+        ++Pc;
+        DISPATCH_NEXT;
+      }
 
-      // Memory & storage
-      TARGET_MLOAD:
-        HANDLER_CALL(MLoadHandler::doExecute());
-      TARGET_MSTORE:
-        HANDLER_CALL(MStoreHandler::doExecute());
-      TARGET_MSTORE8:
-        HANDLER_CALL(MStore8Handler::doExecute());
+      // ---- Memory ops (inlined: MLOAD/MSTORE/MSTORE8) ----
+      // Each opcode performs:
+      //   1. stack underflow check
+      //   2. memory expansion + gas charge (mirror of
+      //      checkMemoryExpandAndChargeGas in opcode_handlers.cpp)
+      //   3. memcpy load/store
+      // The gas formula MUST match the canonical
+      // calculateMemoryExpansionCost EXACTLY:
+      //   MemoryCost(W) = (W*W)/512 + 3*W   (computed in __int128)
+      //   delta = MemoryCost(NewWords) - MemoryCost(CurrentWords)
+      // NewWords/CurrentWords = ceil(size/32) where size is byte length.
+      // Any deviation (e.g. inlining the subtraction before the divide)
+      // can desynchronize gas accounting and break consensus.
+      TARGET_MLOAD : {
+        if (INTX_UNLIKELY(sp < 1)) {
+          Context.setStatus(EVMC_STACK_UNDERFLOW);
+          goto cgoto_error;
+        }
+        const intx::uint256 OffsetVal = Frame->Stack[sp - 1];
+        if (INTX_UNLIKELY(
+                OffsetVal >
+                intx::uint256(std::numeric_limits<uint64_t>::max()))) {
+          Context.setStatus(EVMC_OUT_OF_GAS);
+          goto cgoto_error;
+        }
+        const uint64_t Offset64 = static_cast<uint64_t>(OffsetVal);
+        if (INTX_UNLIKELY(Offset64 >
+                          std::numeric_limits<uint64_t>::max() - 32)) {
+          Context.setStatus(EVMC_OUT_OF_GAS);
+          goto cgoto_error;
+        }
+        const uint64_t NewSize = Offset64 + 32;
+        if (INTX_UNLIKELY(NewSize > MAX_REQUIRED_MEMORY_SIZE)) {
+          Context.setStatus(EVMC_OUT_OF_GAS);
+          goto cgoto_error;
+        }
+        const uint64_t CurrentSize = Frame->Memory.size();
+        const uint64_t AlignedNewSize = (NewSize + 31) / 32 * 32;
+        if (AlignedNewSize > CurrentSize) {
+          const uint64_t CurrentWords = (CurrentSize + 31) / 32;
+          const uint64_t NewWords = (AlignedNewSize + 31) / 32;
+          const __int128 CW = CurrentWords;
+          const __int128 NW = NewWords;
+          const uint64_t CurrentCost =
+              static_cast<uint64_t>(CW * CW / 512 + 3 * CW);
+          const uint64_t NewCost =
+              static_cast<uint64_t>(NW * NW / 512 + 3 * NW);
+          const uint64_t MemoryExpansionCost = NewCost - CurrentCost;
+          if (INTX_UNLIKELY((uint64_t)Frame->Msg.gas < MemoryExpansionCost)) {
+            Context.setStatus(EVMC_OUT_OF_GAS);
+            goto cgoto_error;
+          }
+          Frame->Msg.gas -= MemoryExpansionCost;
+          Frame->Memory.resize(AlignedNewSize, 0);
+        }
+        uint8_t ValueBytes[32];
+        std::memcpy(ValueBytes, Frame->Memory.data() + Offset64, 32);
+        Frame->Stack[sp - 1] = intx::be::load<intx::uint256>(ValueBytes);
+        ++Pc;
+        DISPATCH_NEXT;
+      }
+      TARGET_MSTORE : {
+        if (INTX_UNLIKELY(sp < 2)) {
+          Context.setStatus(EVMC_STACK_UNDERFLOW);
+          goto cgoto_error;
+        }
+        const intx::uint256 OffsetVal = Frame->Stack[sp - 1];
+        const intx::uint256 Value = Frame->Stack[sp - 2];
+        sp -= 2;
+        if (INTX_UNLIKELY(
+                OffsetVal >
+                intx::uint256(std::numeric_limits<uint64_t>::max()))) {
+          Context.setStatus(EVMC_OUT_OF_GAS);
+          goto cgoto_error;
+        }
+        const uint64_t Offset64 = static_cast<uint64_t>(OffsetVal);
+        if (INTX_UNLIKELY(Offset64 >
+                          std::numeric_limits<uint64_t>::max() - 32)) {
+          Context.setStatus(EVMC_OUT_OF_GAS);
+          goto cgoto_error;
+        }
+        const uint64_t NewSize = Offset64 + 32;
+        if (INTX_UNLIKELY(NewSize > MAX_REQUIRED_MEMORY_SIZE)) {
+          Context.setStatus(EVMC_OUT_OF_GAS);
+          goto cgoto_error;
+        }
+        const uint64_t CurrentSize = Frame->Memory.size();
+        const uint64_t AlignedNewSize = (NewSize + 31) / 32 * 32;
+        if (AlignedNewSize > CurrentSize) {
+          const uint64_t CurrentWords = (CurrentSize + 31) / 32;
+          const uint64_t NewWords = (AlignedNewSize + 31) / 32;
+          const __int128 CW = CurrentWords;
+          const __int128 NW = NewWords;
+          const uint64_t CurrentCost =
+              static_cast<uint64_t>(CW * CW / 512 + 3 * CW);
+          const uint64_t NewCost =
+              static_cast<uint64_t>(NW * NW / 512 + 3 * NW);
+          const uint64_t MemoryExpansionCost = NewCost - CurrentCost;
+          if (INTX_UNLIKELY((uint64_t)Frame->Msg.gas < MemoryExpansionCost)) {
+            Context.setStatus(EVMC_OUT_OF_GAS);
+            goto cgoto_error;
+          }
+          Frame->Msg.gas -= MemoryExpansionCost;
+          Frame->Memory.resize(AlignedNewSize, 0);
+        }
+        uint8_t ValueBytes[32];
+        intx::be::store(ValueBytes, Value);
+        std::memcpy(Frame->Memory.data() + Offset64, ValueBytes, 32);
+        ++Pc;
+        DISPATCH_NEXT;
+      }
+      TARGET_MSTORE8 : {
+        if (INTX_UNLIKELY(sp < 2)) {
+          Context.setStatus(EVMC_STACK_UNDERFLOW);
+          goto cgoto_error;
+        }
+        const intx::uint256 OffsetVal = Frame->Stack[sp - 1];
+        const intx::uint256 Value = Frame->Stack[sp - 2];
+        sp -= 2;
+        if (INTX_UNLIKELY(
+                OffsetVal >
+                intx::uint256(std::numeric_limits<uint64_t>::max()))) {
+          Context.setStatus(EVMC_OUT_OF_GAS);
+          goto cgoto_error;
+        }
+        const uint64_t Offset64 = static_cast<uint64_t>(OffsetVal);
+        // Size = 1, no overflow possible for Offset64 + 1 unless Offset64
+        // == UINT64_MAX which would have failed the previous check.
+        const uint64_t NewSize = Offset64 + 1;
+        if (INTX_UNLIKELY(NewSize > MAX_REQUIRED_MEMORY_SIZE)) {
+          Context.setStatus(EVMC_OUT_OF_GAS);
+          goto cgoto_error;
+        }
+        const uint64_t CurrentSize = Frame->Memory.size();
+        const uint64_t AlignedNewSize = (NewSize + 31) / 32 * 32;
+        if (AlignedNewSize > CurrentSize) {
+          const uint64_t CurrentWords = (CurrentSize + 31) / 32;
+          const uint64_t NewWords = (AlignedNewSize + 31) / 32;
+          const __int128 CW = CurrentWords;
+          const __int128 NW = NewWords;
+          const uint64_t CurrentCost =
+              static_cast<uint64_t>(CW * CW / 512 + 3 * CW);
+          const uint64_t NewCost =
+              static_cast<uint64_t>(NW * NW / 512 + 3 * NW);
+          const uint64_t MemoryExpansionCost = NewCost - CurrentCost;
+          if (INTX_UNLIKELY((uint64_t)Frame->Msg.gas < MemoryExpansionCost)) {
+            Context.setStatus(EVMC_OUT_OF_GAS);
+            goto cgoto_error;
+          }
+          Frame->Msg.gas -= MemoryExpansionCost;
+          Frame->Memory.resize(AlignedNewSize, 0);
+        }
+        Frame->Memory[Offset64] =
+            static_cast<uint8_t>(Value & intx::uint256{0xFF});
+        ++Pc;
+        DISPATCH_NEXT;
+      }
       TARGET_SLOAD:
         HANDLER_CALL(SLoadHandler::doExecute());
       TARGET_SSTORE:
         HANDLER_CALL(SStoreHandler::doExecute());
 
-      // Misc
-      TARGET_PC:
-        HANDLER_CALL(PCHandler::doExecute());
-      TARGET_MSIZE:
-        HANDLER_CALL(MSizeHandler::doExecute());
-      TARGET_GAS:
-        HANDLER_CALL(GasHandler::doExecute());
-      TARGET_TLOAD:
-        HANDLER_CALL(TLoadHandler::doExecute());
-      TARGET_TSTORE:
-        HANDLER_CALL(TStoreHandler::doExecute());
+      // ---- Misc (inlined: PC/MSIZE/GAS, pure Frame field reads) ----
+      // These three opcodes only read a single Frame field and push it.
+      // No host call, no gas math, no memory ops -- safest to inline.
+      // IMPORTANT: PC pushes the *current* opcode's Pc.  In the cgoto
+      // dispatch loop `Pc` is a local variable that is incremented only
+      // *after* each opcode runs, so reading the local `Pc` here matches
+      // the original handler's `Frame->Pc` (HANDLER_CALL writes Frame->Pc
+      // back before invoking the handler -- we replicate that semantic by
+      // using the local).
+      TARGET_PC : {
+        if (INTX_UNLIKELY(sp >= MAXSTACK)) {
+          Context.setStatus(EVMC_STACK_OVERFLOW);
+          goto cgoto_error;
+        }
+        Frame->Stack[sp++] = intx::uint256(Pc);
+        ++Pc;
+        DISPATCH_NEXT;
+      }
+      TARGET_MSIZE : {
+        if (INTX_UNLIKELY(sp >= MAXSTACK)) {
+          Context.setStatus(EVMC_STACK_OVERFLOW);
+          goto cgoto_error;
+        }
+        Frame->Stack[sp++] = intx::uint256(Frame->Memory.size());
+        ++Pc;
+        DISPATCH_NEXT;
+      }
+      TARGET_GAS : {
+        if (INTX_UNLIKELY(sp >= MAXSTACK)) {
+          Context.setStatus(EVMC_STACK_OVERFLOW);
+          goto cgoto_error;
+        }
+        // Gas already deducted at chunk entry (chunk-level gas accounting,
+        // see GasChunkCost).  Frame->Msg.gas is int64_t but is guaranteed
+        // non-negative here (chunk gas check is done before dispatch).
+        Frame->Stack[sp++] =
+            intx::uint256(static_cast<uint64_t>(Frame->Msg.gas));
+        ++Pc;
+        DISPATCH_NEXT;
+      }
+      // ---- Inlined: TLOAD / TSTORE (transient storage, EIP-1153) ----
+      // Both call Frame->Host directly. Frame->Host is lazy initialized
+      // at the top of interpret() (around line 385) and is guaranteed
+      // non-null for the lifetime of this dispatch loop (frames inherit
+      // it on entry to interpret()).  TSTORE checks STATIC mode first.
+      TARGET_TLOAD : {
+        if (INTX_UNLIKELY(sp < 1)) {
+          Context.setStatus(EVMC_STACK_UNDERFLOW);
+          goto cgoto_error;
+        }
+        const auto Key = intx::be::store<evmc::bytes32>(Frame->Stack[sp - 1]);
+        Frame->Stack[sp - 1] = intx::be::load<intx::uint256>(
+            Frame->Host->get_transient_storage(Frame->Msg.recipient, Key));
+        ++Pc;
+        DISPATCH_NEXT;
+      }
+      TARGET_TSTORE : {
+        if (INTX_UNLIKELY(Frame->isStaticMode())) {
+          Context.setStatus(EVMC_STATIC_MODE_VIOLATION);
+          goto cgoto_error;
+        }
+        if (INTX_UNLIKELY(sp < 2)) {
+          Context.setStatus(EVMC_STACK_UNDERFLOW);
+          goto cgoto_error;
+        }
+        // Order MUST match the original handler:
+        //   Key   = pop()  -> stack top      (sp-1)
+        //   Value = pop()  -> next on stack  (sp-2)
+        const auto Key = intx::be::store<evmc::bytes32>(Frame->Stack[sp - 1]);
+        const auto Value = intx::be::store<evmc::bytes32>(Frame->Stack[sp - 2]);
+        sp -= 2;
+        Frame->Host->set_transient_storage(Frame->Msg.recipient, Key, Value);
+        ++Pc;
+        DISPATCH_NEXT;
+      }
       TARGET_MCOPY:
         HANDLER_CALL(MCopyHandler::doExecute());
 
