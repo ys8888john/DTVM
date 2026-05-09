@@ -37,8 +37,15 @@ struct RuntimeConfig {
   bool DisableMultipassMultithread = false;
   // Number of threads for multipass JIT if DisableMultipassMultithread is false
   uint32_t NumMultipassThreads = 8;
-  // Enable multipass lazy mode(on request compile)
+  // Enable WASM multipass lazy compilation (segment-based lazy compile)
   bool EnableMultipassLazy = false;
+  // Enable profile-guided JIT:
+  // contracts start in interpreter mode; runtime profiling (sliding window
+  // of recent calls) determines which contracts are hot enough to trigger
+  // background JIT compilation. Modules are NOT compiled at load time.
+  bool EnableProfileGuidedJIT = false;
+  // Maximum number of concurrent background JIT compilation threads.
+  uint32_t NumJITCompileThreads = 10;
 #endif // ZEN_ENABLE_MULTIPASS_JIT
 
   bool validate() {
@@ -65,6 +72,15 @@ struct RuntimeConfig {
       if (!DisableMultipassMultithread && NumMultipassThreads == 0) {
         ZEN_LOG_FATAL(
             "multipass JIT multithread enabled but thread number is 0");
+        return false;
+      }
+      if (EnableProfileGuidedJIT && NumJITCompileThreads == 0) {
+        // A zero-sized JITCompilePool would silently accept tasks that
+        // never run, and shutdown/destruction would block forever waiting
+        // for unfinished futures. Require at least one worker thread when
+        // profile-guided JIT is enabled.
+        ZEN_LOG_FATAL(
+            "profile-guided JIT enabled but NumJITCompileThreads is 0");
         return false;
       }
 #else

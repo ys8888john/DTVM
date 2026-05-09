@@ -60,6 +60,19 @@ EVMModule::EVMModule(Runtime *RT)
 }
 
 EVMModule::~EVMModule() {
+#ifdef ZEN_ENABLE_JIT
+  if (JITCompileFuture.valid()) {
+    // Use a bounded wait to avoid hanging forever if the compilation
+    // thread is stuck. 30 seconds is generous for any single contract
+    // compilation; if it hasn't finished by then, something is wrong.
+    auto Status = JITCompileFuture.wait_for(std::chrono::seconds(30));
+    if (Status == std::future_status::timeout) {
+      ZEN_LOG_ERROR("JIT compilation timed out during module destruction; "
+                    "leaking compile thread to avoid deadlock");
+    }
+  }
+#endif
+
   if (Name) {
     this->freeSymbol(Name);
     Name = common::WASM_SYMBOL_NULL;
@@ -103,18 +116,32 @@ EVMModule::newEVMModule(Runtime &RT, CodeHolderUniquePtr CodeHolder,
   if (RT.getConfig().Mode != common::RunMode::InterpMode) {
 #ifdef ZEN_ENABLE_JIT_PRECOMPILE_FALLBACK
     // Run the EVMAnalyzer once at module creation to determine if this
-    // contract should fall back to interpreter. This avoids per-call O(n)
-    // bytecode scans in the execute() hot path.
+    // contract should fall back to interpreter. We do this even in
+    // profile-guided JIT mode so the background trigger can rely on the
+    // same persisted decision instead of re-evaluating per call.
     COMPILER::EVMAnalyzer Analyzer(Rev);
     Analyzer.analyze(reinterpret_cast<const uint8_t *>(Mod->Code),
                      Mod->CodeSize);
     Mod->ShouldFallbackToInterp =
         Analyzer.getJITSuitability().ShouldFallback ||
         hasUnresolvedCompatibleDynamicReturnTrampoline(Analyzer);
-    if (!Mod->ShouldFallbackToInterp)
 #endif // ZEN_ENABLE_JIT_PRECOMPILE_FALLBACK
+
+#ifdef ZEN_ENABLE_MULTIPASS_JIT
+    if (RT.getConfig().EnableProfileGuidedJIT) {
+      // Profile-guided JIT: skip JIT compilation at load time.
+      // JIT will be triggered later by the profiling logic in execute().
+      // Eagerly init bytecode cache for interpreter use.
+      (void)Mod->getBytecodeCache();
+    } else
+#endif
     {
-      action::performEVMJITCompile(*Mod);
+#ifdef ZEN_ENABLE_JIT_PRECOMPILE_FALLBACK
+      if (!Mod->ShouldFallbackToInterp)
+#endif // ZEN_ENABLE_JIT_PRECOMPILE_FALLBACK
+      {
+        action::performEVMJITCompile(*Mod);
+      }
     }
   }
 
