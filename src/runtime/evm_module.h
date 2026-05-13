@@ -92,6 +92,10 @@ public:
   }
   // Future for background JIT compilation (managed by JITCompilePool).
   std::future<void> JITCompileFuture;
+
+  // Per-module execution statistics for profile-guided JIT diagnostics.
+  uint64_t ModuleExecuteCount = 0;
+  uint64_t ModuleFirstJITAtCall = 0;
 #endif // ZEN_ENABLE_JIT
 
 private:

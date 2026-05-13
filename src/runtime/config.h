@@ -46,6 +46,13 @@ struct RuntimeConfig {
   bool EnableProfileGuidedJIT = false;
   // Maximum number of concurrent background JIT compilation threads.
   uint32_t NumJITCompileThreads = 10;
+  // Profile-guided JIT trigger thresholds (configurable for testing).
+  // Defaults match profile::JIT_TRIGGER_CALL_COUNT / JIT_TRIGGER_TOTAL_GAS.
+  uint64_t JITTriggerCallCount = 32;
+  uint64_t JITTriggerTotalGas = 100000;
+  // Eager JIT: synchronously compile every contract on first call instead
+  // of waiting for the profiling window to fill. For testing only.
+  bool EnableEagerJIT = false;
 #endif // ZEN_ENABLE_MULTIPASS_JIT
 
   bool validate() {

@@ -191,6 +191,14 @@ bool parseBoolEnvValue(const char *Value, bool &ParsedValue) {
 struct DTVM : evmc_vm {
   DTVM();
   ~DTVM() {
+    if (Config.EnableProfileGuidedJIT) {
+      fprintf(stderr,
+              "[DTVM] Profile-guided JIT stats: total_executions=%lu, "
+              "calls=%zu, profiled_contracts=%zu, jit_triggered=%lu, "
+              "first_jit_at_call=#%lu\n",
+              ExecuteCallCount, RingBuffer.Count, ProfileStore.size(),
+              BackgroundJITTriggerCount, FirstJITCallNumber);
+    }
     // Drain the JIT compile thread pool first: wait for all in-flight
     // compilation tasks to finish before unloading modules they reference.
     CompilePool.reset();
@@ -271,6 +279,11 @@ struct DTVM : evmc_vm {
   CallRingBuffer RingBuffer{profile::RING_BUFFER_CAPACITY};
   // Thread pool for background JIT compilation (lazily initialized).
   std::unique_ptr<JITCompilePool> CompilePool;
+  // Statistics: number of background JIT compilations actually triggered.
+  uint64_t BackgroundJITTriggerCount = 0;
+  // Statistics: total execute() call count and first JIT execution call number.
+  uint64_t ExecuteCallCount = 0;
+  uint64_t FirstJITCallNumber = 0;
 
   bool isModuleInUse(const EVMModule *Mod) const {
     if (CachedMainInst && CachedMainInst->getModule() == Mod)
@@ -338,6 +351,27 @@ enum evmc_set_option_result set_option(evmc_vm *VMInstance, const char *Name,
     bool Parsed = false;
     if (parseBoolEnvValue(Value, Parsed)) {
       VM->Config.EnableProfileGuidedJIT = Parsed;
+      return EVMC_SET_OPTION_SUCCESS;
+    }
+    return EVMC_SET_OPTION_INVALID_VALUE;
+  } else if (std::strcmp(Name, "jit_trigger_calls") == 0) {
+    int Parsed = std::atoi(Value);
+    if (Parsed > 0) {
+      VM->Config.JITTriggerCallCount = static_cast<uint64_t>(Parsed);
+      return EVMC_SET_OPTION_SUCCESS;
+    }
+    return EVMC_SET_OPTION_INVALID_VALUE;
+  } else if (std::strcmp(Name, "jit_trigger_gas") == 0) {
+    int Parsed = std::atoi(Value);
+    if (Parsed > 0) {
+      VM->Config.JITTriggerTotalGas = static_cast<uint64_t>(Parsed);
+      return EVMC_SET_OPTION_SUCCESS;
+    }
+    return EVMC_SET_OPTION_INVALID_VALUE;
+  } else if (std::strcmp(Name, "jit_eager") == 0) {
+    bool Parsed = false;
+    if (parseBoolEnvValue(Value, Parsed)) {
+      VM->Config.EnableEagerJIT = Parsed;
       return EVMC_SET_OPTION_SUCCESS;
     }
     return EVMC_SET_OPTION_INVALID_VALUE;
@@ -716,8 +750,8 @@ void updateProfileAndMaybeTriggerJIT(DTVM *VM, const evmc_message *Msg,
   CurrentProfile.WindowGasUsed += GasUsed;
 
   // 5. Check JIT trigger conditions.
-  if (CurrentProfile.WindowCallCount < profile::JIT_TRIGGER_CALL_COUNT ||
-      CurrentProfile.WindowGasUsed < profile::JIT_TRIGGER_TOTAL_GAS) {
+  if (CurrentProfile.WindowCallCount < VM->Config.JITTriggerCallCount ||
+      CurrentProfile.WindowGasUsed < VM->Config.JITTriggerTotalGas) {
     return;
   }
 
@@ -744,6 +778,9 @@ void updateProfileAndMaybeTriggerJIT(DTVM *VM, const evmc_message *Msg,
 
   // Trigger background JIT compilation via thread pool.
   CurrentProfile.JITTriggered = true;
+  VM->BackgroundJITTriggerCount++;
+  ZEN_LOG_DEBUG("Background JIT triggered (#%lu) for contract",
+                VM->BackgroundJITTriggerCount);
   auto &Pool = getOrCreateCompilePool(VM);
   Mod->JITCompileFuture =
       Pool.submit([Mod]() { zen::action::performEVMJITCompile(*Mod); });
@@ -771,6 +808,7 @@ evmc_result execute(evmc_vm *EVMInstance, const evmc_host_interface *Host,
                     const evmc_message *Msg, const uint8_t *Code,
                     size_t CodeSize) {
   auto *VM = static_cast<DTVM *>(EVMInstance);
+  VM->ExecuteCallCount++;
 
   // Interpreter mode: use optimized fast path (bypasses callEVMMain)
   if (VM->Config.Mode == RunMode::InterpMode) {
@@ -795,6 +833,7 @@ evmc_result execute(evmc_vm *EVMInstance, const evmc_host_interface *Host,
       return evmc_make_result(EVMC_FAILURE, 0, 0, nullptr, 0);
     }
     ModuleGuard ModGuard(VM, Mod, IsTransientMod);
+    Mod->ModuleExecuteCount++;
 
 #ifdef ZEN_ENABLE_JIT_PRECOMPILE_FALLBACK
     // O(1) flag check replaces per-call O(n) EVMAnalyzer scan.
@@ -820,12 +859,24 @@ evmc_result execute(evmc_vm *EVMInstance, const evmc_host_interface *Host,
     // keeps the Ctx pooling and pre/post bookkeeping in lock-step with the
     // public interpreter fast path, so the two paths can never drift.
     if (!Mod->getJITCode() && VM->Config.EnableProfileGuidedJIT) {
-      evmc_result RawResult = runInterpreterOnResolvedInstance(
-          VM, Mod, TheInst, Msg, IsTransientMod);
-      if (shouldUsePersistentModuleCache(Msg)) {
-        updateProfileAndMaybeTriggerJIT(VM, Msg, RawResult, Mod);
+      if (VM->Config.EnableEagerJIT) {
+        // Eager JIT: synchronously compile on first encounter, then fall
+        // through to the JIT fast path below instead of interpreting.
+        zen::action::performEVMJITCompile(*Mod);
+        // If compilation failed, fall back to interpreter.
+        if (!Mod->getJITCode()) {
+          return executeInterpreterFastPath(VM, Host, Context, Rev, Msg, Code,
+                                            CodeSize);
+        }
+        // Fall through to JIT fast path.
+      } else {
+        evmc_result RawResult = runInterpreterOnResolvedInstance(
+            VM, Mod, TheInst, Msg, IsTransientMod);
+        if (shouldUsePersistentModuleCache(Msg)) {
+          updateProfileAndMaybeTriggerJIT(VM, Msg, RawResult, Mod);
+        }
+        return RawResult;
       }
-      return RawResult;
     }
 #endif // ZEN_ENABLE_MULTIPASS_JIT
 
@@ -836,9 +887,25 @@ evmc_result execute(evmc_vm *EVMInstance, const evmc_host_interface *Host,
     // logs on failure (see PR #481), so Mod->getJITCode() can legitimately be
     // nullptr here. Fall back to the interpreter fast path in that case
     // instead of jumping through a null function pointer.
-    if (!Mod->getJITCode()) {
-      return executeInterpreterFastPath(VM, Host, Context, Rev, Msg, Code,
-                                        CodeSize);
+    // if (!Mod->getJITCode()) {
+    return executeInterpreterFastPath(VM, Host, Context, Rev, Msg, Code,
+                                      CodeSize);
+    // }
+
+    // Log when this module first executes via JIT.
+    if (Mod->ModuleFirstJITAtCall == 0) {
+      Mod->ModuleFirstJITAtCall = Mod->ModuleExecuteCount;
+      // Build a short hex prefix from the contract bytecode for identification.
+      char codePrefix[16] = {0};
+      size_t prefixLen = Mod->CodeSize < 4 ? Mod->CodeSize : 4;
+      for (size_t i = 0; i < prefixLen; ++i)
+        snprintf(codePrefix + i * 2, sizeof(codePrefix) - i * 2, "%02x",
+                 static_cast<unsigned>(static_cast<uint8_t>(Mod->Code[i])));
+      fprintf(stderr,
+              "[DTVM] Contract first JIT execution at module call #%lu "
+              "(global call #%lu), contract size=%zu, code_prefix=0x%s\n",
+              Mod->ModuleExecuteCount, VM->ExecuteCallCount, Mod->CodeSize,
+              codePrefix);
     }
 
     evmc_message MsgWithCode = *Msg;
