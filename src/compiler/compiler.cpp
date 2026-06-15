@@ -17,6 +17,7 @@
 #include "compiler/mir/function.h"
 #include "compiler/mir/module.h"
 #include "compiler/mir/pass/dead_basicblock_elim.h"
+#include "compiler/mir/pass/dead_code_elim.h"
 #include "compiler/mir/pass/verifier.h"
 #include "compiler/target/x86/x86_cg_peephole.h"
 #include "compiler/target/x86/x86_mc_lowering.h"
@@ -70,6 +71,9 @@ void JITCompilerBase::compileMIRToCgIR(MModule &MMod, MFunction &MFunc,
 
   DeadMBasicBlockElim MBBDCE;
   MBBDCE.runOnMFunction(MFunc);
+
+  DeadMCodeElim MDCE;
+  MDCE.runOnMFunction(MFunc);
 
   CgFunction &MF = CgFunc;
 

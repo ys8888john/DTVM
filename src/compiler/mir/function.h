@@ -160,6 +160,8 @@ public:
 
   uint32_t getNumInstructions() const { return Instructions.size(); }
 
+  const auto &getInstructions() const { return Instructions; }
+
   template <class T, typename... Arguments>
   T *createInstruction(bool IsStmt, MBasicBlock &BB, Arguments &&...Args) {
     T *Inst = T::create(Ctx.MemPool, std::forward<Arguments>(Args)...);

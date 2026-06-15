@@ -52,6 +52,10 @@ public:
 
   size_t getNumStatements() const { return Statements.size(); }
 
+  void eraseStatement(CompileList<MInstruction *>::iterator It) {
+    Statements.erase(It);
+  }
+
   void clear() { Statements.clear(); }
 
   uint32_t getIdx() const { return BBIdx; }
