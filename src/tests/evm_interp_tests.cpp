@@ -1223,6 +1223,44 @@ struct SettlementResult {
   bool Success = false;
 };
 
+const evmc::address SettlementContractAddr = evmc::literals::operator""_address(
+    "00000000000000000000000000000000000000f1");
+const evmc::address SettlementSenderAddr = evmc::literals::operator""_address(
+    "a94f5374fce5edbc8e2a8697c15331677e6ebf0b");
+constexpr uint64_t SettlementGasLimit = 8000000;
+constexpr uint64_t SettlementSenderBalance = 0xffffffffffff;
+constexpr intx::uint256 SettlementGasPrice = intx::uint256(16);
+
+// Creates the common account/tx-context state used by settlement tests.
+// SeedStorage is used by the REVERT test to ensure the first SSTORE is a
+// paid reset rather than a free set.
+void prepareSettlementHost(zen::evm::ZenMockedEVMHost &Host,
+                           const std::vector<uint8_t> &Bytecode,
+                           const evmc::address &SenderAddr,
+                           const evmc::address &ContractAddr,
+                           bool SeedStorage = false) {
+  evmc::MockedAccount ContractAccount;
+  ContractAccount.code = evmc::bytes(Bytecode.data(), Bytecode.size());
+  if (SeedStorage) {
+    evmc::bytes32 Key{};
+    evmc::bytes32 Val{};
+    Val.bytes[31] = 1;
+    ContractAccount.storage[Key].current = Val;
+    ContractAccount.storage[Key].original = Val;
+  }
+  Host.accounts[ContractAddr] = ContractAccount;
+
+  evmc::MockedAccount SenderAccount;
+  SenderAccount.set_balance(SettlementSenderBalance);
+  Host.accounts[SenderAddr] = SenderAccount;
+
+  evmc_tx_context TxCtx{};
+  TxCtx.tx_origin = SenderAddr;
+  TxCtx.tx_gas_price = intx::be::store<evmc::uint256be>(SettlementGasPrice);
+  TxCtx.block_base_fee = intx::be::store<evmc::uint256be>(SettlementGasPrice);
+  Host.tx_context = TxCtx;
+}
+
 template <typename PrepareHostT>
 SettlementResult runSettlementTransaction(const evmc::address &ContractAddr,
                                           const evmc::address &SenderAddr,
@@ -1365,32 +1403,11 @@ TEST(EVMRegressionTest, Issue588_CappedRefundDoesNotReduceChargesOnCancun) {
   auto BytecodeBuf = zen::utils::fromHex(BytecodeHex);
   ASSERT_TRUE(BytecodeBuf) << "Failed to parse issue #588 bytecode";
 
-  const evmc::address ContractAddr = evmc::literals::operator""_address(
-      "00000000000000000000000000000000000000f1");
-  const evmc::address SenderAddr = evmc::literals::operator""_address(
-      "a94f5374fce5edbc8e2a8697c15331677e6ebf0b");
-
-  constexpr uint64_t GasLimit = 8000000;
-  constexpr uint64_t SenderInitialBalanceValue = 0xffffffffffff;
-  constexpr intx::uint256 GasPrice = intx::uint256(16);
-
   auto Result = runSettlementTransaction(
-      ContractAddr, SenderAddr, *BytecodeBuf, EVMC_CANCUN, GasLimit,
-      [&](zen::evm::ZenMockedEVMHost &Host) {
-        evmc::MockedAccount ContractAccount;
-        ContractAccount.code =
-            evmc::bytes(BytecodeBuf->data(), BytecodeBuf->size());
-        Host.accounts[ContractAddr] = ContractAccount;
-
-        evmc::MockedAccount SenderAccount;
-        SenderAccount.set_balance(SenderInitialBalanceValue);
-        Host.accounts[SenderAddr] = SenderAccount;
-
-        evmc_tx_context TxCtx{};
-        TxCtx.tx_origin = SenderAddr;
-        TxCtx.tx_gas_price = intx::be::store<evmc::uint256be>(GasPrice);
-        TxCtx.block_base_fee = intx::be::store<evmc::uint256be>(GasPrice);
-        Host.tx_context = TxCtx;
+      SettlementContractAddr, SettlementSenderAddr, *BytecodeBuf, EVMC_CANCUN,
+      SettlementGasLimit, [&](zen::evm::ZenMockedEVMHost &Host) {
+        prepareSettlementHost(Host, *BytecodeBuf, SettlementSenderAddr,
+                              SettlementContractAddr);
       });
 
   ASSERT_TRUE(Result.Success) << "Issue #588 transaction should succeed";
@@ -1405,7 +1422,7 @@ TEST(EVMRegressionTest, Issue588_CappedRefundDoesNotReduceChargesOnCancun) {
   EXPECT_EQ(Result.GasCharged, 17770u)
       << "Refund cap should produce the expected Cancun gas charge";
 
-  intx::uint256 ExpectedCost = GasPrice * Result.GasCharged;
+  intx::uint256 ExpectedCost = SettlementGasPrice * Result.GasCharged;
   EXPECT_EQ(Result.InitialSenderBalance - Result.FinalSenderBalance,
             ExpectedCost)
       << "Sender should be charged GasCharged * gas_price on issue #588";
@@ -1421,46 +1438,18 @@ TEST(EVMRegressionTest, Issue588_RevertResetsRefundAccumulator) {
   auto BytecodeBuf = zen::utils::fromHex(BytecodeHex);
   ASSERT_TRUE(BytecodeBuf) << "Failed to parse revert bytecode";
 
-  const evmc::address ContractAddr = evmc::literals::operator""_address(
-      "00000000000000000000000000000000000000f1");
-  const evmc::address SenderAddr = evmc::literals::operator""_address(
-      "a94f5374fce5edbc8e2a8697c15331677e6ebf0b");
-
-  constexpr uint64_t GasLimit = 8000000;
-  constexpr uint64_t SenderInitialBalanceValue = 0xffffffffffff;
-  constexpr intx::uint256 GasPrice = intx::uint256(16);
-
   auto Result = runSettlementTransaction(
-      ContractAddr, SenderAddr, *BytecodeBuf, EVMC_CANCUN, GasLimit,
-      [&](zen::evm::ZenMockedEVMHost &Host) {
-        evmc::MockedAccount ContractAccount;
-        ContractAccount.code =
-            evmc::bytes(BytecodeBuf->data(), BytecodeBuf->size());
-        // Pre-existing non-zero value so the SSTORE costs the reset price and
-        // would generate a refund if the slot were later cleared.
-        evmc::bytes32 Key{};
-        evmc::bytes32 Val{};
-        Val.bytes[31] = 1;
-        ContractAccount.storage[Key].current = Val;
-        ContractAccount.storage[Key].original = Val;
-        Host.accounts[ContractAddr] = ContractAccount;
-
-        evmc::MockedAccount SenderAccount;
-        SenderAccount.set_balance(SenderInitialBalanceValue);
-        Host.accounts[SenderAddr] = SenderAccount;
-
-        evmc_tx_context TxCtx{};
-        TxCtx.tx_origin = SenderAddr;
-        TxCtx.tx_gas_price = intx::be::store<evmc::uint256be>(GasPrice);
-        TxCtx.block_base_fee = intx::be::store<evmc::uint256be>(GasPrice);
-        Host.tx_context = TxCtx;
+      SettlementContractAddr, SettlementSenderAddr, *BytecodeBuf, EVMC_CANCUN,
+      SettlementGasLimit, [&](zen::evm::ZenMockedEVMHost &Host) {
+        prepareSettlementHost(Host, *BytecodeBuf, SettlementSenderAddr,
+                              SettlementContractAddr, /*SeedStorage=*/true);
       });
 
   ASSERT_TRUE(Result.Success) << "Revert transaction should succeed";
   EXPECT_EQ(Result.GasCharged, Result.GasUsed)
       << "REVERT must reset refund counter so no refund is applied";
 
-  intx::uint256 ExpectedCost = GasPrice * Result.GasCharged;
+  intx::uint256 ExpectedCost = SettlementGasPrice * Result.GasCharged;
   EXPECT_EQ(Result.InitialSenderBalance - Result.FinalSenderBalance,
             ExpectedCost)
       << "Sender cost must equal GasUsed * gas_price after revert";
@@ -1480,32 +1469,12 @@ TEST(EVMRegressionTest, Issue588_HalfRefundCapOnByzantium) {
   auto BytecodeBuf = zen::utils::fromHex(BytecodeHex);
   ASSERT_TRUE(BytecodeBuf) << "Failed to parse issue #588 pre-London bytecode";
 
-  const evmc::address ContractAddr = evmc::literals::operator""_address(
-      "00000000000000000000000000000000000000f1");
-  const evmc::address SenderAddr = evmc::literals::operator""_address(
-      "a94f5374fce5edbc8e2a8697c15331677e6ebf0b");
-
-  constexpr uint64_t GasLimit = 8000000;
-  constexpr uint64_t SenderInitialBalanceValue = 0xffffffffffff;
-  constexpr intx::uint256 GasPrice = intx::uint256(16);
-
   auto Result = runSettlementTransaction(
-      ContractAddr, SenderAddr, *BytecodeBuf, EVMC_BYZANTIUM, GasLimit,
+      SettlementContractAddr, SettlementSenderAddr, *BytecodeBuf,
+      EVMC_BYZANTIUM, SettlementGasLimit,
       [&](zen::evm::ZenMockedEVMHost &Host) {
-        evmc::MockedAccount ContractAccount;
-        ContractAccount.code =
-            evmc::bytes(BytecodeBuf->data(), BytecodeBuf->size());
-        Host.accounts[ContractAddr] = ContractAccount;
-
-        evmc::MockedAccount SenderAccount;
-        SenderAccount.set_balance(SenderInitialBalanceValue);
-        Host.accounts[SenderAddr] = SenderAccount;
-
-        evmc_tx_context TxCtx{};
-        TxCtx.tx_origin = SenderAddr;
-        TxCtx.tx_gas_price = intx::be::store<evmc::uint256be>(GasPrice);
-        TxCtx.block_base_fee = intx::be::store<evmc::uint256be>(GasPrice);
-        Host.tx_context = TxCtx;
+        prepareSettlementHost(Host, *BytecodeBuf, SettlementSenderAddr,
+                              SettlementContractAddr);
       });
 
   ASSERT_TRUE(Result.Success)
@@ -1535,7 +1504,7 @@ TEST(EVMRegressionTest, Issue588_HalfRefundCapOnByzantium) {
   EXPECT_EQ(Result.GasCharged, Result.GasUsed - HalfCap)
       << "GasCharged = GasUsed - GasUsed/2 after refund cap";
 
-  intx::uint256 ExpectedCost = GasPrice * Result.GasCharged;
+  intx::uint256 ExpectedCost = SettlementGasPrice * Result.GasCharged;
   EXPECT_EQ(Result.InitialSenderBalance - Result.FinalSenderBalance,
             ExpectedCost)
       << "Sender should be charged GasCharged * gas_price on issue #588";
@@ -1551,32 +1520,12 @@ TEST(EVMRegressionTest, Issue588_SELFDESTRUCTPreLondonRefundCapped) {
   auto BytecodeBuf = zen::utils::fromHex(BytecodeHex);
   ASSERT_TRUE(BytecodeBuf) << "Failed to parse SELFDESTRUCT bytecode hex";
 
-  const evmc::address ContractAddr = evmc::literals::operator""_address(
-      "00000000000000000000000000000000000000f1");
-  const evmc::address SenderAddr = evmc::literals::operator""_address(
-      "a94f5374fce5edbc8e2a8697c15331677e6ebf0b");
-
-  constexpr uint64_t GasLimit = 8000000;
-  constexpr uint64_t SenderInitialBalanceValue = 0xffffffffffff;
-  constexpr intx::uint256 GasPrice = intx::uint256(16);
-
   auto Result = runSettlementTransaction(
-      ContractAddr, SenderAddr, *BytecodeBuf, EVMC_BYZANTIUM, GasLimit,
+      SettlementContractAddr, SettlementSenderAddr, *BytecodeBuf,
+      EVMC_BYZANTIUM, SettlementGasLimit,
       [&](zen::evm::ZenMockedEVMHost &Host) {
-        evmc::MockedAccount ContractAccount;
-        ContractAccount.code =
-            evmc::bytes(BytecodeBuf->data(), BytecodeBuf->size());
-        Host.accounts[ContractAddr] = ContractAccount;
-
-        evmc::MockedAccount SenderAccount;
-        SenderAccount.set_balance(SenderInitialBalanceValue);
-        Host.accounts[SenderAddr] = SenderAccount;
-
-        evmc_tx_context TxCtx{};
-        TxCtx.tx_origin = SenderAddr;
-        TxCtx.tx_gas_price = intx::be::store<evmc::uint256be>(GasPrice);
-        TxCtx.block_base_fee = intx::be::store<evmc::uint256be>(GasPrice);
-        Host.tx_context = TxCtx;
+        prepareSettlementHost(Host, *BytecodeBuf, SettlementSenderAddr,
+                              SettlementContractAddr);
       });
 
   ASSERT_TRUE(Result.Success)
@@ -1602,7 +1551,7 @@ TEST(EVMRegressionTest, Issue588_SELFDESTRUCTPreLondonRefundCapped) {
   EXPECT_EQ(Result.GasCharged, SelfDestructGas - HalfCap)
       << "GasCharged must be GasUsed minus the /2 cap after SELFDESTRUCT";
 
-  intx::uint256 ExpectedCost = GasPrice * Result.GasCharged;
+  intx::uint256 ExpectedCost = SettlementGasPrice * Result.GasCharged;
   EXPECT_EQ(Result.InitialSenderBalance - Result.FinalSenderBalance,
             ExpectedCost)
       << "Sender must be charged GasCharged * gas_price after SELFDESTRUCT";
@@ -1617,32 +1566,11 @@ TEST(EVMRegressionTest, Issue588_CliSettlement_CappedRefundOnCancun) {
   ASSERT_TRUE(BytecodeBuf)
       << "Failed to parse issue #588 CLI settlement bytecode";
 
-  const evmc::address ContractAddr = evmc::literals::operator""_address(
-      "00000000000000000000000000000000000000f1");
-  const evmc::address SenderAddr = evmc::literals::operator""_address(
-      "a94f5374fce5edbc8e2a8697c15331677e6ebf0b");
-
-  constexpr uint64_t GasLimit = 8000000;
-  constexpr uint64_t SenderInitialBalanceValue = 0xffffffffffff;
-  constexpr intx::uint256 GasPrice = intx::uint256(16);
-
   auto Result = runDtvmCliSettlementTransaction(
-      ContractAddr, SenderAddr, *BytecodeBuf, EVMC_CANCUN, GasLimit,
-      [&](zen::evm::ZenMockedEVMHost &Host) {
-        evmc::MockedAccount ContractAccount;
-        ContractAccount.code =
-            evmc::bytes(BytecodeBuf->data(), BytecodeBuf->size());
-        Host.accounts[ContractAddr] = ContractAccount;
-
-        evmc::MockedAccount SenderAccount;
-        SenderAccount.set_balance(SenderInitialBalanceValue);
-        Host.accounts[SenderAddr] = SenderAccount;
-
-        evmc_tx_context TxCtx{};
-        TxCtx.tx_origin = SenderAddr;
-        TxCtx.tx_gas_price = intx::be::store<evmc::uint256be>(GasPrice);
-        TxCtx.block_base_fee = intx::be::store<evmc::uint256be>(GasPrice);
-        Host.tx_context = TxCtx;
+      SettlementContractAddr, SettlementSenderAddr, *BytecodeBuf, EVMC_CANCUN,
+      SettlementGasLimit, [&](zen::evm::ZenMockedEVMHost &Host) {
+        prepareSettlementHost(Host, *BytecodeBuf, SettlementSenderAddr,
+                              SettlementContractAddr);
       });
 
   ASSERT_TRUE(Result.Success) << "CLI settlement transaction should succeed";
@@ -1652,7 +1580,7 @@ TEST(EVMRegressionTest, Issue588_CliSettlement_CappedRefundOnCancun) {
   EXPECT_EQ(Result.GasCharged, 34570u)
       << "CLI path refund cap should produce the actual Cancun gas charge";
 
-  intx::uint256 ExpectedCost = GasPrice * Result.GasCharged;
+  intx::uint256 ExpectedCost = SettlementGasPrice * Result.GasCharged;
   EXPECT_EQ(Result.InitialSenderBalance - Result.FinalSenderBalance,
             ExpectedCost)
       << "CLI path sender should be charged GasCharged * gas_price";
@@ -1666,32 +1594,12 @@ TEST(EVMRegressionTest, Issue588_CliSettlement_HalfRefundCapOnByzantium) {
   ASSERT_TRUE(BytecodeBuf)
       << "Failed to parse issue #588 pre-London CLI settlement bytecode";
 
-  const evmc::address ContractAddr = evmc::literals::operator""_address(
-      "00000000000000000000000000000000000000f1");
-  const evmc::address SenderAddr = evmc::literals::operator""_address(
-      "a94f5374fce5edbc8e2a8697c15331677e6ebf0b");
-
-  constexpr uint64_t GasLimit = 8000000;
-  constexpr uint64_t SenderInitialBalanceValue = 0xffffffffffff;
-  constexpr intx::uint256 GasPrice = intx::uint256(16);
-
   auto Result = runDtvmCliSettlementTransaction(
-      ContractAddr, SenderAddr, *BytecodeBuf, EVMC_BYZANTIUM, GasLimit,
+      SettlementContractAddr, SettlementSenderAddr, *BytecodeBuf,
+      EVMC_BYZANTIUM, SettlementGasLimit,
       [&](zen::evm::ZenMockedEVMHost &Host) {
-        evmc::MockedAccount ContractAccount;
-        ContractAccount.code =
-            evmc::bytes(BytecodeBuf->data(), BytecodeBuf->size());
-        Host.accounts[ContractAddr] = ContractAccount;
-
-        evmc::MockedAccount SenderAccount;
-        SenderAccount.set_balance(SenderInitialBalanceValue);
-        Host.accounts[SenderAddr] = SenderAccount;
-
-        evmc_tx_context TxCtx{};
-        TxCtx.tx_origin = SenderAddr;
-        TxCtx.tx_gas_price = intx::be::store<evmc::uint256be>(GasPrice);
-        TxCtx.block_base_fee = intx::be::store<evmc::uint256be>(GasPrice);
-        Host.tx_context = TxCtx;
+        prepareSettlementHost(Host, *BytecodeBuf, SettlementSenderAddr,
+                              SettlementContractAddr);
       });
 
   ASSERT_TRUE(Result.Success)
@@ -1706,7 +1614,7 @@ TEST(EVMRegressionTest, Issue588_CliSettlement_HalfRefundCapOnByzantium) {
   EXPECT_EQ(Result.GasCharged, 31012u)
       << "CLI path GasCharged should be GasUsed minus the refund";
 
-  intx::uint256 ExpectedCost = GasPrice * Result.GasCharged;
+  intx::uint256 ExpectedCost = SettlementGasPrice * Result.GasCharged;
   EXPECT_EQ(Result.InitialSenderBalance - Result.FinalSenderBalance,
             ExpectedCost)
       << "CLI path sender should be charged GasCharged * gas_price";

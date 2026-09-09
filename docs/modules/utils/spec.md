@@ -136,6 +136,10 @@ The utils module is DTVM's **utility and shared facilities layer**, providing cr
 | `bytesToHex` | `std::string bytesToHex(const std::vector<uint8_t>& Value)` | Byte vector to hex |
 | `uint256beToBytes` | `std::vector<uint8_t> uint256beToBytes(const evmc::uint256be& Value)` | uint256be to bytes |
 | `computeCreateAddress` | `evmc::address computeCreateAddress(const evmc::address& Sender, uint64_t SenderNonce)` | Create contract address |
+| `computeRefundCap` | `uint64_t computeRefundCap(evmc_revision Revision, uint64_t GasUsed)` | Revision-aware EVM gas refund cap |
+| `computeEvmTransactionFees` | `EvmFeeComponents computeEvmTransactionFees(const evmc::uint256be& EffectiveOrMaxFeePerGas, const evmc::uint256be& BaseFee, const std::optional<evmc::uint256be>& MaxPriorityFee)` | Effective gas price and priority fee |
+| `applyEvmUpfrontGas` | `EvmUpfrontGasResult applyEvmUpfrontGas(evmc::MockedHost& Host, evmc_message& Msg, uint64_t GasLimit, evmc_revision Revision)` | Deduct intrinsic gas, prewarm accounts, and prepay gas |
+| `applyEvmPostExecutionSettlement` | `void applyEvmPostExecutionSettlement(evmc::MockedHost& Host, const evmc_message& Msg, uint64_t GasLimit, const evmc::Result& Result, evmc_revision Revision)` | Apply refund cap, refund unused gas, and pay priority fee |
 | `saveState` | `bool saveState(const evmc::MockedHost& Host, const std::string& FilePath)` | MockedHost state persistence |
 | `loadState` | `bool loadState(evmc::MockedHost& Host, const std::string& FilePath)` | MockedHost state load |
 

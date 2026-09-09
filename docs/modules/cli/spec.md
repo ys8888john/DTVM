@@ -70,6 +70,8 @@ evmc::address computeCreateAddress(evmc::address, uint64_t nonce);
 bool readBinaryFile(path, std::vector<uint8_t>&);
 bool saveState(evmc::MockedHost const&, path);
 bool loadState(evmc::MockedHost&, path);
+EvmUpfrontGasResult applyEvmUpfrontGas(evmc::MockedHost&, evmc_message&, uint64_t, evmc_revision);
+void applyEvmPostExecutionSettlement(evmc::MockedHost&, const evmc_message&, uint64_t, const evmc::Result&, evmc_revision);
 
 // zen::utils (logging)
 std::shared_ptr<ILogger> createConsoleLogger(name, LoggerLevel);

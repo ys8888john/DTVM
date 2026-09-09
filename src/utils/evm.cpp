@@ -581,10 +581,10 @@ uint64_t computeRefundCap(evmc_revision Revision, uint64_t GasUsed) {
   return Revision >= EVMC_LONDON ? GasUsed / 5 : GasUsed / 2;
 }
 
-Eip1559FeeComponents
-computeEip1559Fees(const evmc::uint256be &EffectiveOrMaxFeePerGas,
-                   const evmc::uint256be &BaseFee,
-                   const std::optional<evmc::uint256be> &MaxPriorityFee) {
+EvmFeeComponents computeEvmTransactionFees(
+    const evmc::uint256be &EffectiveOrMaxFeePerGas,
+    const evmc::uint256be &BaseFee,
+    const std::optional<evmc::uint256be> &MaxPriorityFee) {
   intx::uint256 GasPriceN =
       intx::be::load<intx::uint256>(EffectiveOrMaxFeePerGas);
   intx::uint256 BaseFeeN = intx::be::load<intx::uint256>(BaseFee);
@@ -622,8 +622,8 @@ EvmUpfrontGasResult applyEvmUpfrontGas(evmc::MockedHost &Host,
   // Deduct upfront gas cost from sender's balance before execution.
   // Per EVM spec (Yellow Paper §6), the sender's balance is reduced by
   // effective_gas_price * gas_limit at the start of transaction execution.
-  const auto Fees = computeEip1559Fees(Host.tx_context.tx_gas_price,
-                                       Host.tx_context.block_base_fee);
+  const auto Fees = computeEvmTransactionFees(Host.tx_context.tx_gas_price,
+                                              Host.tx_context.block_base_fee);
   intx::uint256 UpfrontGasCost =
       intx::uint256(GasLimit) * Fees.EffectiveGasPrice;
   auto &SenderAccount = Host.accounts[Msg.sender];
@@ -652,8 +652,8 @@ void applyEvmPostExecutionSettlement(evmc::MockedHost &Host,
   const uint64_t GasCharged =
       AppliedRefund < TotalGasUsed ? TotalGasUsed - AppliedRefund : 0;
 
-  const auto Fees = computeEip1559Fees(Host.tx_context.tx_gas_price,
-                                       Host.tx_context.block_base_fee);
+  const auto Fees = computeEvmTransactionFees(Host.tx_context.tx_gas_price,
+                                              Host.tx_context.block_base_fee);
   auto &SenderAccount = Host.accounts[Msg.sender];
   intx::uint256 SenderBalance =
       intx::be::load<intx::uint256>(SenderAccount.balance);

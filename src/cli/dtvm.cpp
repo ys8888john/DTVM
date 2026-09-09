@@ -387,16 +387,6 @@ int main(int argc, char *argv[]) {
       return exitMain(EXIT_FAILURE, RT.get());
     }
 
-    MayBe<EVMInstance *> InstRet = Iso->createEVMInstance(*Mod, GasLimit);
-    if (!InstRet) {
-      const Error &Err = InstRet.getError();
-      ZEN_ASSERT(!Err.isEmpty());
-      const auto &ErrMsg = Err.getFormattedMessage(false);
-      SIMPLE_LOG_ERROR("failed to create EVM instance: %s", ErrMsg.c_str());
-      return exitMain(EXIT_FAILURE, RT.get());
-    }
-    EVMInstance *Inst = *InstRet;
-    Inst->setRevision(EvmRevision);
     evmc_call_kind MsgKind = DeployMode ? EVMC_CREATE : EVMC_CALL;
     evmc::Result ExeResult;
     std::vector<uint8_t> Bytecode;
@@ -459,6 +449,20 @@ int main(int argc, char *argv[]) {
       ZEN_LOG_ERROR("sender balance insufficient for upfront gas cost");
       return exitMain(EVMC_INSUFFICIENT_BALANCE, RT.get());
     }
+
+    // Create the instance only after Msg.gas has been reduced by intrinsic
+    // gas so that both interpreter and JIT paths start with the same gas.
+    MayBe<EVMInstance *> InstRet =
+        Iso->createEVMInstance(*Mod, static_cast<uint64_t>(Msg.gas));
+    if (!InstRet) {
+      const Error &Err = InstRet.getError();
+      ZEN_ASSERT(!Err.isEmpty());
+      const auto &ErrMsg = Err.getFormattedMessage(false);
+      SIMPLE_LOG_ERROR("failed to create EVM instance: %s", ErrMsg.c_str());
+      return exitMain(EXIT_FAILURE, RT.get());
+    }
+    EVMInstance *Inst = *InstRet;
+    Inst->setRevision(EvmRevision);
 
     RT->callEVMMain(*Inst, Msg, ExeResult);
 

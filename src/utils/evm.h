@@ -55,19 +55,19 @@ void prewarmTransactionAccounts(evmc::MockedHost &Host, evmc_revision Revision,
 /// pre-London caps at GasUsed/2.
 uint64_t computeRefundCap(evmc_revision Revision, uint64_t GasUsed);
 
-struct Eip1559FeeComponents {
+struct EvmFeeComponents {
   intx::uint256 EffectiveGasPrice;
   intx::uint256 PriorityFee;
 };
 
-/// Compute the effective gas price and priority fee.
+/// Compute the effective gas price and priority fee for an EVM transaction.
 /// When MaxPriorityFee is provided, EffectiveOrMaxFeePerGas is the EIP-1559
 /// maxFeePerGas, PriorityFee is min(maxPriorityFee, maxFeePerGas - baseFee),
 /// and EffectiveGasPrice is baseFee + PriorityFee.
 /// Otherwise EffectiveOrMaxFeePerGas is already the effective gas price for a
 /// legacy transaction, PriorityFee is max(effectiveGasPrice - baseFee, 0),
 /// and EffectiveGasPrice is effectiveGasPrice.
-Eip1559FeeComponents computeEip1559Fees(
+EvmFeeComponents computeEvmTransactionFees(
     const evmc::uint256be &EffectiveOrMaxFeePerGas,
     const evmc::uint256be &BaseFee,
     const std::optional<evmc::uint256be> &MaxPriorityFee = std::nullopt);

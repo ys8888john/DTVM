@@ -1097,7 +1097,7 @@ private:
                             const TransactionExecutionConfig &Config,
                             const evmc_message &Msg,
                             TransactionExecutionResult &Result) {
-    const auto Fees = zen::utils::computeEip1559Fees(
+    const auto Fees = zen::utils::computeEvmTransactionFees(
         tx_context.tx_gas_price, tx_context.block_base_fee,
         Config.MaxPriorityFeePerGas);
     const intx::uint256 EffectiveGasPrice = Fees.EffectiveGasPrice;
@@ -1134,7 +1134,7 @@ private:
                         const TransactionExecutionConfig &Config,
                         const evmc_message &Msg,
                         TransactionExecutionResult &Result, bool FeesPrepaid) {
-    const auto Fees = zen::utils::computeEip1559Fees(
+    const auto Fees = zen::utils::computeEvmTransactionFees(
         tx_context.tx_gas_price, tx_context.block_base_fee,
         Config.MaxPriorityFeePerGas);
     const intx::uint256 EffectiveGasPrice = Fees.EffectiveGasPrice;
