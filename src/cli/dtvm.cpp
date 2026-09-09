@@ -443,66 +443,27 @@ int main(int argc, char *argv[]) {
       }
     }
 
-    // Deduct intrinsic gas before EVM execution.
-    const int64_t IntrinsicGas = zen::utils::computeIntrinsicGas(
-        EvmRevision, MsgKind, Msg.input_data, Msg.input_size);
-    if (Msg.gas < IntrinsicGas) {
-      ZEN_LOG_ERROR("intrinsic gas (%ld) exceeds gas limit (%ld)",
-                    (long)IntrinsicGas, (long)Msg.gas);
-      return exitMain(EVMC_OUT_OF_GAS, RT.get());
-    }
-    Msg.gas -= IntrinsicGas;
-
-    // EIP-2929/EIP-3651: Pre-warm transaction-level accounts.
-    zen::utils::prewarmTransactionAccounts(
-        MockedHost, EvmRevision, Msg.sender, Msg.recipient,
-        MockedHost.tx_context.block_coinbase);
-
-    // Deduct upfront gas cost from sender's balance before execution.
-    // Per EVM spec (Yellow Paper §6), the sender's balance is reduced by
-    // effective_gas_price * gas_limit at the start of transaction execution.
-    intx::uint256 GasPrice =
-        intx::be::load<intx::uint256>(MockedHost.tx_context.tx_gas_price);
-    intx::uint256 BaseFee =
-        intx::be::load<intx::uint256>(MockedHost.tx_context.block_base_fee);
-    intx::uint256 EffectiveGasPrice = GasPrice > BaseFee ? GasPrice : BaseFee;
-    intx::uint256 UpfrontGasCost = intx::uint256(GasLimit) * EffectiveGasPrice;
-    auto &SenderAccount = MockedHost.accounts[Msg.sender];
-    intx::uint256 SenderBalance =
-        intx::be::load<intx::uint256>(SenderAccount.balance);
-    if (SenderBalance < UpfrontGasCost) {
+    // Apply upfront gas: deduct intrinsic gas, pre-warm accounts, and deduct
+    // upfront balance. Failure exits with the appropriate EVM status code.
+    const auto UpfrontResult =
+        zen::utils::applyEvmUpfrontGas(MockedHost, Msg, GasLimit, EvmRevision);
+    if (UpfrontResult != zen::utils::EvmUpfrontGasResult::Success) {
+      if (UpfrontResult ==
+          zen::utils::EvmUpfrontGasResult::IntrinsicGasExceedsLimit) {
+        const int64_t IntrinsicGas = zen::utils::computeIntrinsicGas(
+            EvmRevision, MsgKind, Msg.input_data, Msg.input_size);
+        ZEN_LOG_ERROR("intrinsic gas (%ld) exceeds gas limit (%ld)",
+                      (long)IntrinsicGas, (long)(GasLimit));
+        return exitMain(EVMC_OUT_OF_GAS, RT.get());
+      }
       ZEN_LOG_ERROR("sender balance insufficient for upfront gas cost");
       return exitMain(EVMC_INSUFFICIENT_BALANCE, RT.get());
     }
-    SenderBalance -= UpfrontGasCost;
-    SenderAccount.balance = intx::be::store<evmc::bytes32>(SenderBalance);
 
     RT->callEVMMain(*Inst, Msg, ExeResult);
 
-    // Settle gas charges after execution: refund unused gas to sender,
-    // pay priority fee to coinbase.
-    uint64_t GasUsed = static_cast<uint64_t>(
-        GasLimit - (ExeResult.gas_left > 0 ? ExeResult.gas_left : 0));
-    GasUsed += static_cast<uint64_t>(IntrinsicGas);
-    intx::uint256 PriorityFee =
-        GasPrice > BaseFee ? GasPrice - BaseFee : intx::uint256{0};
-    // Refund unused gas: (GasLimit - GasUsed) * EffectiveGasPrice
-    if (GasLimit > GasUsed) {
-      intx::uint256 Refund =
-          intx::uint256(GasLimit - GasUsed) * EffectiveGasPrice;
-      SenderBalance += Refund;
-      SenderAccount.balance = intx::be::store<evmc::bytes32>(SenderBalance);
-    }
-    // Pay priority fee to coinbase: GasUsed * PriorityFee
-    if (PriorityFee != intx::uint256{0}) {
-      auto &CoinbaseAccount =
-          MockedHost.accounts[MockedHost.tx_context.block_coinbase];
-      intx::uint256 CoinbaseBalance =
-          intx::be::load<intx::uint256>(CoinbaseAccount.balance);
-      CoinbaseBalance += intx::uint256(GasUsed) * PriorityFee;
-      CoinbaseAccount.balance = intx::be::store<evmc::bytes32>(CoinbaseBalance);
-    }
-
+    zen::utils::applyEvmPostExecutionSettlement(MockedHost, Msg, GasLimit,
+                                                ExeResult, EvmRevision);
     if (EVMC_CREATE == MsgKind && ExeResult.status_code == EVMC_SUCCESS) {
       evmc::address DeployerAddr = zen::utils::parseAddress(SenderAddress);
       auto &DeployerAccount = MockedHost.accounts[DeployerAddr];

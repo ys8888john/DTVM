@@ -7,6 +7,7 @@
 #include "host/evm/crypto.h"
 #include "intx/intx.hpp"
 #include "utils/rlp_encoding.h"
+#include <algorithm>
 #include <fstream>
 #include <iomanip>
 #include <limits>
@@ -572,6 +573,106 @@ void prewarmTransactionAccounts(evmc::MockedHost &Host, evmc_revision Revision,
   if (Revision >= EVMC_SHANGHAI) {
     Host.access_account(Coinbase);
   }
+}
+
+uint64_t computeRefundCap(evmc_revision Revision, uint64_t GasUsed) {
+  // EIP-3529: London and later cap refunds at 1/5 of GasUsed; pre-London
+  // capped them at 1/2.
+  return Revision >= EVMC_LONDON ? GasUsed / 5 : GasUsed / 2;
+}
+
+Eip1559FeeComponents
+computeEip1559Fees(const evmc::uint256be &EffectiveOrMaxFeePerGas,
+                   const evmc::uint256be &BaseFee,
+                   const std::optional<evmc::uint256be> &MaxPriorityFee) {
+  intx::uint256 GasPriceN =
+      intx::be::load<intx::uint256>(EffectiveOrMaxFeePerGas);
+  intx::uint256 BaseFeeN = intx::be::load<intx::uint256>(BaseFee);
+  intx::uint256 PriorityFee =
+      GasPriceN > BaseFeeN ? GasPriceN - BaseFeeN : intx::uint256{0};
+  intx::uint256 EffectiveGasPrice = GasPriceN;
+
+  if (MaxPriorityFee) {
+    intx::uint256 MaxPriorityN = intx::be::load<intx::uint256>(*MaxPriorityFee);
+    intx::uint256 MaxFeeMinusBase =
+        GasPriceN > BaseFeeN ? GasPriceN - BaseFeeN : intx::uint256{0};
+    PriorityFee =
+        MaxPriorityN < MaxFeeMinusBase ? MaxPriorityN : MaxFeeMinusBase;
+    EffectiveGasPrice = BaseFeeN + PriorityFee;
+  }
+  return {EffectiveGasPrice, PriorityFee};
+}
+
+EvmUpfrontGasResult applyEvmUpfrontGas(evmc::MockedHost &Host,
+                                       evmc_message &Msg, uint64_t GasLimit,
+                                       evmc_revision Revision) {
+  // Deduct intrinsic gas before EVM execution.
+  const int64_t IntrinsicGas =
+      computeIntrinsicGas(Revision, Msg.kind, Msg.input_data, Msg.input_size);
+  if (Msg.gas < IntrinsicGas) {
+    return EvmUpfrontGasResult::IntrinsicGasExceedsLimit;
+  }
+  Msg.gas -= IntrinsicGas;
+
+  // EIP-2929/EIP-3651: Pre-warm transaction-level accounts.
+  zen::utils::prewarmTransactionAccounts(Host, Revision, Msg.sender,
+                                         Msg.recipient,
+                                         Host.tx_context.block_coinbase);
+
+  // Deduct upfront gas cost from sender's balance before execution.
+  // Per EVM spec (Yellow Paper §6), the sender's balance is reduced by
+  // effective_gas_price * gas_limit at the start of transaction execution.
+  const auto Fees = computeEip1559Fees(Host.tx_context.tx_gas_price,
+                                       Host.tx_context.block_base_fee);
+  intx::uint256 UpfrontGasCost =
+      intx::uint256(GasLimit) * Fees.EffectiveGasPrice;
+  auto &SenderAccount = Host.accounts[Msg.sender];
+  intx::uint256 SenderBalance =
+      intx::be::load<intx::uint256>(SenderAccount.balance);
+  if (SenderBalance < UpfrontGasCost) {
+    return EvmUpfrontGasResult::InsufficientBalance;
+  }
+  SenderBalance -= UpfrontGasCost;
+  SenderAccount.balance = intx::be::store<evmc::bytes32>(SenderBalance);
+  return EvmUpfrontGasResult::Success;
+}
+
+void applyEvmPostExecutionSettlement(evmc::MockedHost &Host,
+                                     const evmc_message &Msg, uint64_t GasLimit,
+                                     const evmc::Result &Result,
+                                     evmc_revision Revision) {
+  const uint64_t TotalGasUsed = static_cast<uint64_t>(
+      GasLimit - (Result.gas_left > 0 ? Result.gas_left : 0));
+  // Intrinsic gas was already deducted from Msg.gas before execution, so it
+  // is part of TotalGasUsed above; do not add it again (double counting).
+  const uint64_t RawGasRefund =
+      static_cast<uint64_t>(std::max<int64_t>(0, Result.gas_refund));
+  const uint64_t AppliedRefund =
+      std::min(RawGasRefund, computeRefundCap(Revision, TotalGasUsed));
+  const uint64_t GasCharged =
+      AppliedRefund < TotalGasUsed ? TotalGasUsed - AppliedRefund : 0;
+
+  const auto Fees = computeEip1559Fees(Host.tx_context.tx_gas_price,
+                                       Host.tx_context.block_base_fee);
+  auto &SenderAccount = Host.accounts[Msg.sender];
+  intx::uint256 SenderBalance =
+      intx::be::load<intx::uint256>(SenderAccount.balance);
+
+  // Refund unused gas: (GasLimit - GasCharged) * EffectiveGasPrice
+  if (GasLimit > GasCharged) {
+    intx::uint256 Refund =
+        intx::uint256(GasLimit - GasCharged) * Fees.EffectiveGasPrice;
+    SenderBalance += Refund;
+  }
+  // Pay priority fee to coinbase: GasCharged * PriorityFee
+  if (Fees.PriorityFee != intx::uint256{0}) {
+    auto &CoinbaseAccount = Host.accounts[Host.tx_context.block_coinbase];
+    intx::uint256 CoinbaseBalance =
+        intx::be::load<intx::uint256>(CoinbaseAccount.balance);
+    CoinbaseBalance += intx::uint256(GasCharged) * Fees.PriorityFee;
+    CoinbaseAccount.balance = intx::be::store<evmc::bytes32>(CoinbaseBalance);
+  }
+  SenderAccount.balance = intx::be::store<evmc::bytes32>(SenderBalance);
 }
 
 } // namespace zen::utils

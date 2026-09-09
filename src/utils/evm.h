@@ -6,6 +6,7 @@
 #include "utils/others.h"
 #include <evmc/evmc.hpp>
 #include <evmc/mocked_host.hpp>
+#include <intx/intx.hpp>
 #include <optional>
 
 namespace zen::utils {
@@ -49,6 +50,47 @@ void prewarmTransactionAccounts(evmc::MockedHost &Host, evmc_revision Revision,
                                 const evmc::address &Sender,
                                 const evmc::address &Recipient,
                                 const evmc::address &Coinbase);
+
+/// EIP-3529 refund cap: London and later cap refunds at GasUsed/5;
+/// pre-London caps at GasUsed/2.
+uint64_t computeRefundCap(evmc_revision Revision, uint64_t GasUsed);
+
+struct Eip1559FeeComponents {
+  intx::uint256 EffectiveGasPrice;
+  intx::uint256 PriorityFee;
+};
+
+/// Compute the effective gas price and priority fee.
+/// When MaxPriorityFee is provided, EffectiveOrMaxFeePerGas is the EIP-1559
+/// maxFeePerGas, PriorityFee is min(maxPriorityFee, maxFeePerGas - baseFee),
+/// and EffectiveGasPrice is baseFee + PriorityFee.
+/// Otherwise EffectiveOrMaxFeePerGas is already the effective gas price for a
+/// legacy transaction, PriorityFee is max(effectiveGasPrice - baseFee, 0),
+/// and EffectiveGasPrice is effectiveGasPrice.
+Eip1559FeeComponents computeEip1559Fees(
+    const evmc::uint256be &EffectiveOrMaxFeePerGas,
+    const evmc::uint256be &BaseFee,
+    const std::optional<evmc::uint256be> &MaxPriorityFee = std::nullopt);
+
+enum class EvmUpfrontGasResult {
+  Success,
+  IntrinsicGasExceedsLimit,
+  InsufficientBalance
+};
+
+/// Deduct intrinsic gas from Msg.gas and pre-warm transaction-level accounts.
+/// Also deducts gas_limit * effective_gas_price from the sender's balance.
+/// Call this before callEVMMain.
+EvmUpfrontGasResult applyEvmUpfrontGas(evmc::MockedHost &Host,
+                                       evmc_message &Msg, uint64_t GasLimit,
+                                       evmc_revision Revision);
+
+/// Apply the dtvm-cli post-execution gas settlement: refund cap (EIP-3529),
+/// refund unused gas to sender, and pay priority fee to coinbase.
+void applyEvmPostExecutionSettlement(evmc::MockedHost &Host,
+                                     const evmc_message &Msg, uint64_t GasLimit,
+                                     const evmc::Result &Result,
+                                     evmc_revision Revision);
 
 } // namespace zen::utils
 
