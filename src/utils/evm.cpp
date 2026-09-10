@@ -392,6 +392,16 @@ bool loadState(evmc::MockedHost &Host, const std::string &FilePath) {
               StorageVal.current =
                   zen::utils::parseBytes32(StorageValue["value"].GetString());
             }
+            if (StorageValue.HasMember("original") &&
+                StorageValue["original"].IsString()) {
+              StorageVal.original = zen::utils::parseBytes32(
+                  StorageValue["original"].GetString());
+            } else {
+              // A persisted transaction-final state is the start of a new
+              // transaction. Unless an explicit original value is provided,
+              // current is also the transaction's original value.
+              StorageVal.original = StorageVal.current;
+            }
             if (StorageValue.HasMember("access_status") &&
                 StorageValue["access_status"].IsUint()) {
               StorageVal.access_status = static_cast<evmc_access_status>(
@@ -401,6 +411,7 @@ bool loadState(evmc::MockedHost &Host, const std::string &FilePath) {
             // Old format with just value
             StorageVal.current =
                 zen::utils::parseBytes32(StorageValue.GetString());
+            StorageVal.original = StorageVal.current;
           }
 
           Account.storage[Key] = StorageVal;

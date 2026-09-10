@@ -1209,6 +1209,105 @@ TEST(EVMStateSaveLoad, MissingChainIdAndBlobBaseFee) {
   std::filesystem::remove(StateFilePath);
 }
 
+// Regression test for https://github.com/DTVMStack/DTVM/issues/589.
+// A storage value loaded from prestate is both current and original for the
+// new transaction. If original remains zero, a non-zero prestate slot written
+// to zero is misclassified as a dirty clear instead of a reset.
+TEST(EVMStateSaveLoad, LoadedStorageInitializesOriginalForNewTransaction) {
+  const std::string StateFilePath = "/tmp/dtvm_issue589_state.json";
+  const std::string ContractAddr = "00000000000000000000000000000000000000f1";
+  const std::string SenderAddr = "a94f5374fce5edbc8e2a8697c15331677e6ebf0b";
+  const std::vector<uint8_t> Bytecode = {0x60, 0x00, 0x60, 0x00, 0x55, 0x00};
+
+  {
+    std::ofstream StateFile(StateFilePath);
+    ASSERT_TRUE(StateFile) << "Failed to create issue #589 state file";
+    StateFile << R"({
+      "accounts": {
+        ")" << ContractAddr
+              << R"(": {
+          "balance": "0000000000000000000000000000000000000000000000000000000000000000",
+          "code": "0x600060005500",
+          "nonce": 0,
+          "storage": {
+            "0000000000000000000000000000000000000000000000000000000000000000": {
+              "value": "0000000000000000000000000000000000000000000000000000000000000005",
+              "access_status": 0
+            }
+          }
+        },
+        ")" << SenderAddr
+              << R"(": {
+          "balance": "0000000000000000000000000000000000000000000000000de0b6b3a7640000",
+          "code": "0x",
+          "nonce": 0,
+          "storage": {}
+        }
+      },
+      "tx_context": {
+        "gas_price": "0000000000000000000000000000000000000000000000000000000000000010",
+        "block_number": 1,
+        "block_timestamp": 1000,
+        "block_coinbase": "b94f5374fce5edbc8e2a8697c15331677e6ebf0b",
+        "block_prev_randao": "0000000000000000000000000000000000000000000000000000000000000020",
+        "block_gas_limit": 10000000,
+        "block_base_fee": "0000000000000000000000000000000000000000000000000000000000000010",
+        "tx_origin": ")"
+              << SenderAddr << R"("
+      }
+    })";
+  }
+
+  auto HostPtr = std::make_unique<zen::evm::ZenMockedEVMHost>();
+  ASSERT_TRUE(zen::utils::loadState(*HostPtr, StateFilePath));
+
+  const evmc::address ContractAddress = zen::utils::parseAddress(ContractAddr);
+  const evmc::address SenderAddress = zen::utils::parseAddress(SenderAddr);
+  const evmc::bytes32 StorageKey{};
+  const auto &Slot = HostPtr->accounts[ContractAddress].storage.at(StorageKey);
+  const auto PrestateValue = zen::utils::parseBytes32(
+      "0000000000000000000000000000000000000000000000000000000000000005");
+  EXPECT_EQ(std::memcmp(Slot.current.bytes, PrestateValue.bytes, 32), 0)
+      << "Prestate current storage value was not loaded";
+  EXPECT_EQ(std::memcmp(Slot.original.bytes, PrestateValue.bytes, 32), 0)
+      << "Prestate current value must initialize original for a new tx";
+
+  RuntimeConfig Config;
+  Config.Mode = common::RunMode::InterpMode;
+  auto RT = Runtime::newEVMRuntime(Config, HostPtr.get());
+  ASSERT_TRUE(RT);
+  HostPtr->setRuntime(RT.get());
+
+  zen::evm::ZenMockedEVMHost::TransactionExecutionConfig ExecConfig;
+  ExecConfig.ModuleName = "issue589";
+  ExecConfig.Bytecode = Bytecode.data();
+  ExecConfig.BytecodeSize = Bytecode.size();
+  ExecConfig.Revision = EVMC_CANCUN;
+  ExecConfig.GasLimit = 100000;
+  ExecConfig.IntrinsicGas = 21000;
+  evmc_message Msg{};
+  Msg.kind = EVMC_CALL;
+  Msg.gas = 100000;
+  Msg.sender = SenderAddress;
+  Msg.recipient = ContractAddress;
+  Msg.code_address = ContractAddress;
+  ExecConfig.Message = Msg;
+
+  auto Result = HostPtr->executeTransaction(ExecConfig);
+  ASSERT_TRUE(Result.Success) << Result.ErrorMessage;
+  EXPECT_EQ(Result.Status, EVMC_SUCCESS);
+  // Execution gas: 2 PUSH1 + cold SLOAD + reset SSTORE = 5006.
+  // Intrinsic gas: 21000. Raw refund: 4800; cap floor(26006 / 5) = 5201.
+  EXPECT_EQ(Result.GasUsed, 26006u)
+      << "SSTORE(5 -> 0) must charge cold access + reset gas";
+  EXPECT_EQ(Result.GasRefund, 4800u)
+      << "Clearing a non-zero prestate slot refunds R_clear";
+  EXPECT_EQ(Result.GasCharged, 21206u)
+      << "Host-path net SSTORE gas is reset cost after refund";
+
+  std::filesystem::remove(StateFilePath);
+}
+
 namespace {
 
 // Helper that builds and returns the final sender balance for a transaction
