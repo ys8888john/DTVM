@@ -1231,8 +1231,7 @@ TEST(EVMStateSaveLoad, LoadedStorageInitializesOriginalForNewTransaction) {
           "nonce": 0,
           "storage": {
             "0000000000000000000000000000000000000000000000000000000000000000": {
-              "value": "0000000000000000000000000000000000000000000000000000000000000005",
-              "access_status": 0
+              "value": "0000000000000000000000000000000000000000000000000000000000000005"
             }
           }
         },
@@ -1306,6 +1305,107 @@ TEST(EVMStateSaveLoad, LoadedStorageInitializesOriginalForNewTransaction) {
       << "Host-path net SSTORE gas is reset cost after refund";
 
   std::filesystem::remove(StateFilePath);
+}
+
+// Regression test for https://github.com/DTVMStack/DTVM/issues/590.
+// Warm/cold access is transaction execution state, not world state. A legacy
+// prestate's access_status must not cold-skip the next transaction's first
+// access, and freshly saved states must not carry the field.
+TEST(EVMStateSaveLoad, AccessStatusIsNotPrestateState) {
+  const std::string StateFilePath = "/tmp/dtvm_issue590_state.json";
+  const std::string SavedStateFilePath = "/tmp/dtvm_issue590_saved_state.json";
+  const std::string ContractAddr = "00000000000000000000000000000000000000f1";
+  const std::string SenderAddr = "a94f5374fce5edbc8e2a8697c15331677e6ebf0b";
+  const std::vector<uint8_t> Bytecode = {0x60, 0x03, 0x60, 0x00, 0x55, 0x00};
+
+  {
+    std::ofstream StateFile(StateFilePath);
+    ASSERT_TRUE(StateFile) << "Failed to create issue #590 state file";
+    StateFile << R"({
+      "accounts": {
+        ")" << ContractAddr
+              << R"(": {
+          "balance": "0000000000000000000000000000000000000000000000000000000000000000",
+          "code": "0x600360005500",
+          "nonce": 0,
+          "storage": {
+            "0000000000000000000000000000000000000000000000000000000000000000": {
+              "value": "0000000000000000000000000000000000000000000000000000000000000000",
+              "access_status": 1
+            }
+          }
+        },
+        ")" << SenderAddr
+              << R"(": {
+          "balance": "0000000000000000000000000000000000000000000000000de0b6b3a7640000",
+          "code": "0x",
+          "nonce": 0,
+          "storage": {}
+        }
+      },
+      "tx_context": {
+        "gas_price": "0000000000000000000000000000000000000000000000000000000000000010",
+        "block_number": 1,
+        "block_timestamp": 1000,
+        "block_coinbase": "b94f5374fce5edbc8e2a8697c15331677e6ebf0b",
+        "block_prev_randao": "0000000000000000000000000000000000000000000000000000000000000020",
+        "block_gas_limit": 10000000,
+        "block_base_fee": "0000000000000000000000000000000000000000000000000000000000000010",
+        "tx_origin": ")"
+              << SenderAddr << R"("
+      }
+    })";
+  }
+
+  auto HostPtr = std::make_unique<zen::evm::ZenMockedEVMHost>();
+  ASSERT_TRUE(zen::utils::loadState(*HostPtr, StateFilePath));
+
+  const evmc::address ContractAddress = zen::utils::parseAddress(ContractAddr);
+  const evmc::address SenderAddress = zen::utils::parseAddress(SenderAddr);
+  const evmc::bytes32 StorageKey{};
+  const auto &Slot = HostPtr->accounts[ContractAddress].storage.at(StorageKey);
+  EXPECT_EQ(Slot.access_status, EVMC_ACCESS_COLD)
+      << "Prestate access_status must not warm storage for a new transaction";
+
+  RuntimeConfig Config;
+  Config.Mode = common::RunMode::InterpMode;
+  auto RT = Runtime::newEVMRuntime(Config, HostPtr.get());
+  ASSERT_TRUE(RT);
+  HostPtr->setRuntime(RT.get());
+
+  zen::evm::ZenMockedEVMHost::TransactionExecutionConfig ExecConfig;
+  ExecConfig.ModuleName = "issue590";
+  ExecConfig.Bytecode = Bytecode.data();
+  ExecConfig.BytecodeSize = Bytecode.size();
+  ExecConfig.Revision = EVMC_CANCUN;
+  ExecConfig.GasLimit = 100000;
+  evmc_message Msg{};
+  Msg.kind = EVMC_CALL;
+  Msg.gas = 100000;
+  Msg.sender = SenderAddress;
+  Msg.recipient = ContractAddress;
+  Msg.code_address = ContractAddress;
+  ExecConfig.Message = Msg;
+
+  auto Result = HostPtr->executeTransaction(ExecConfig);
+  ASSERT_TRUE(Result.Success) << Result.ErrorMessage;
+  EXPECT_EQ(Result.Status, EVMC_SUCCESS);
+  EXPECT_EQ(Result.GasUsed, 22106u)
+      << "The first SSTORE must pay cold access plus set cost";
+
+  ASSERT_TRUE(zen::utils::saveState(*HostPtr, SavedStateFilePath));
+  std::ifstream SavedStateFile(SavedStateFilePath);
+  std::string SavedState((std::istreambuf_iterator<char>(SavedStateFile)),
+                         std::istreambuf_iterator<char>());
+  ASSERT_TRUE(SavedStateFile) << "Failed to read saved state";
+  EXPECT_EQ(SavedState.find("access_status"), std::string::npos)
+      << "Saved state must not contain transaction access status";
+  auto SavedHost = std::make_unique<zen::evm::ZenMockedEVMHost>();
+  EXPECT_TRUE(zen::utils::loadState(*SavedHost, SavedStateFilePath))
+      << "Saved state must remain valid JSON";
+
+  std::filesystem::remove(StateFilePath);
+  std::filesystem::remove(SavedStateFilePath);
 }
 
 namespace {

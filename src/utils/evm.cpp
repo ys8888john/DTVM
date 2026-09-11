@@ -257,8 +257,7 @@ bool saveState(const evmc::MockedHost &Host, const std::string &FilePath) {
       File << "          \"value\": ";
       writeJsonString(File,
                       toHex(Value.current.bytes, sizeof(Value.current.bytes)));
-      File << ",\n";
-      File << "          \"access_status\": " << Value.access_status << "\n";
+      File << "\n";
       File << "        }";
     }
     if (!FirstStorage)
@@ -386,7 +385,9 @@ bool loadState(evmc::MockedHost &Host, const std::string &FilePath) {
           evmc::StorageValue StorageVal;
 
           if (StorageValue.IsObject()) {
-            // New format with value and access_status
+            // The optional original value allows callers to provide a
+            // transaction-specific original. access_status is never part of a
+            // pre-state; legacy files may include it and it must be ignored.
             if (StorageValue.HasMember("value") &&
                 StorageValue["value"].IsString()) {
               StorageVal.current =
@@ -401,11 +402,6 @@ bool loadState(evmc::MockedHost &Host, const std::string &FilePath) {
               // transaction. Unless an explicit original value is provided,
               // current is also the transaction's original value.
               StorageVal.original = StorageVal.current;
-            }
-            if (StorageValue.HasMember("access_status") &&
-                StorageValue["access_status"].IsUint()) {
-              StorageVal.access_status = static_cast<evmc_access_status>(
-                  StorageValue["access_status"].GetUint());
             }
           } else if (StorageValue.IsString()) {
             // Old format with just value
