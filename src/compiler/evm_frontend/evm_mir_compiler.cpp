@@ -6010,9 +6010,10 @@ EVMMirBuilder::handleKeccak256(Operand OffsetComponents,
 #ifdef ZEN_ENABLE_EVM_GAS_REGISTER
   reloadGasFromMemory();
 #endif
-  if (!UsePreparedMemory) {
-    reloadMemorySizeFromInstance();
-  }
+  // Constant KECCAK ranges are executed by a no-expand helper, but the helper
+  // may still grow the instance memory on first use.  Keep the cached base
+  // pointer/size in sync before lowering the next direct memory operation.
+  reloadMemorySizeFromInstance();
   return Result;
 }
 
