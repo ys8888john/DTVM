@@ -344,7 +344,7 @@ bool loadState(evmc::MockedHost &Host, const std::string &FilePath) {
         evmc::address Address = zen::utils::parseAddress(AddressStr);
 
         const rapidjson::Value &AccountData = It->value;
-        evmc::MockedAccount Account;
+        evmc::MockedAccount &Account = ParsedHost.accounts[Address];
 
         // Parse balance
         if (AccountData.HasMember("balance") &&
@@ -419,7 +419,7 @@ bool loadState(evmc::MockedHost &Host, const std::string &FilePath) {
           }
         }
 
-        ParsedHost.accounts[Address] = Account;
+
       }
     }
 
