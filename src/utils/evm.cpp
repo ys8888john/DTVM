@@ -418,8 +418,6 @@ bool loadState(evmc::MockedHost &Host, const std::string &FilePath) {
             ParsedHost.accounts[Address].storage[Key] = StorageVal;
           }
         }
-
-
       }
     }
 
